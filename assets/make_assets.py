@@ -77,7 +77,7 @@ def pane_dev(x, y, w, h, animated=True):
     b.append(T(x + 24, cy, "This session", 15, 500, "var(--muted)") + T(x + w - 24, cy, "$5.12", 22, 600, anchor="end"))
     bw = w - 48
     b.append(f'<rect x="{x+24}" y="{cy+14}" width="{bw}" height="8" rx="4" fill="var(--track)"/>'
-             f'<g class="fill" style="transform-origin:{x+24}px 0"><rect x="{x+24}" y="{cy+14}" width="{bw*.72:.0f}" height="8" rx="4" fill="var(--amber)"/></g>'
+             f'<rect x="{x+24}" y="{cy+14}" width="{bw*.72:.0f}" height="8" rx="4" fill="var(--amber)"/>'
              + T(x + 24, cy + 44, "Conversation 72% full", 14, 400, "var(--muted)"))
     cy += 70
     b.append(f'<g class="nudge"><rect x="{x+24}" y="{cy}" width="{w-48}" height="46" rx="12" fill="var(--btn)"/>'
@@ -133,7 +133,7 @@ def hero(th):
          T(68, 200, "Pigment", 108, 600, extra='letter-spacing="-3.5"'),
          T(74, 256, "How much paint went into each ", 28, 500, "var(--muted)", extra='textLength="400" lengthAdjust="spacingAndGlyphs"'),
          T(478, 256, "stroke.", 28, 600, "var(--accent)", extra='textLength="88" lengthAdjust="spacingAndGlyphs"'),
-         '<path class="stroke" d="M 474 272 C 496 266, 528 264, 548 268 S 562 273, 568 269" fill="none" stroke="var(--amber)" stroke-width="6" stroke-linecap="round" stroke-opacity=".8"/>',
+         '<path class="stroke" d="M 474 272 C 496 266, 528 264, 548 268 S 562 273, 568 269" fill="none" stroke="var(--amber)" stroke-width="7" stroke-linecap="round" stroke-opacity=".95"/>',
          T(74, 318, "What your AI work costs, beside the chat: each prompt,", 20, 400, "var(--muted)"),
          T(74, 346, "each task, each session, and the sprint for whoever runs it.", 20, 400, "var(--muted)")]
     for i, c in enumerate(SWATCHES):
@@ -147,12 +147,12 @@ def hero(th):
 
 def views(th):
     t = THEMES[th]
-    W, H = 1280, 600
+    W, H = 1280, 650
     b = [T(72, 70, "Two views", 15, 600, "var(--accent)"),
          T(72, 108, "One for the work, one for the sprint.", 30, 600, extra='letter-spacing="-.6"'),
-         pane_dev(72, 140, 540, 420), pane_mgr(668, 140, 540, 420),
-         T(342, 586, "Developer · Your work", 14, 500, "var(--muted)", "middle"),
-         T(938, 586, "Manager · The sprint", 14, 500, "var(--muted)", "middle"),
+         pane_dev(72, 140, 540, 460), pane_mgr(668, 140, 540, 460),
+         T(342, 628, "Developer · Your work", 14, 500, "var(--muted)", "middle"),
+         T(938, 628, "Manager · The sprint", 14, 500, "var(--muted)", "middle"),
          T(1208, 70, "Example numbers", 13, 500, "var(--muted)", "end")]
     return wrap(W, H, t, "".join(b), ANIM, "Pigment's two views",
                 "Your work, for a developer: this prompt, this task, this session, Optimize now. "
