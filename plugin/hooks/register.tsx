@@ -580,7 +580,18 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const w0 = await read($, work)
+    const stored = await read($, work)
+    // The session's own figures, read live: what this conversation has cost and how full it is right now,
+    // and how many prompts it has had — not only what this copy of the mod happened to count.
+    const live = stored.isMeasured ? await $.session.usage().catch(() => null) : null
+    const turns = stored.isMeasured ? await $.session.turns().catch(() => 0) : 0
+    const w0: Work = {
+      ...stored,
+      sessionUsd: live?.cost?.usd ?? stored.sessionUsd,
+      contextPercent: live?.context.percent ?? stored.contextPercent,
+      hasUnknownPrice: live?.cost?.hasUnknownPrice === true || stored.hasUnknownPrice,
+    }
+    const promptCount = Math.max(turns, stored.prompts.length)
     const { Raster, Svg } = $.ui.resolve(e) as unknown as {
       Raster?: (p: { key: string; columns: number; rows: number; cells: string }) => JSX.Element
       Svg?: (p: { source: string; alt: string }) => JSX.Element
@@ -842,7 +853,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           <Text dimColor>This session</Text>
           <Text bold>{usd(w.sessionUsd)}</Text>
-          <Text dimColor>{w.prompts.length} {w.prompts.length === 1 ? 'prompt' : 'prompts'}{w.hasUnknownPrice ? ', one model priced as another' : ''}</Text>
+          <Text dimColor>{promptCount} {promptCount === 1 ? 'prompt' : 'prompts'}{w.hasUnknownPrice ? ', one model priced as another' : ''}</Text>
           {w.storage === 'cloud' && w.waiting > 0 && <Text dimColor>{w.waiting} waiting to reach the team server. I'll keep trying.</Text>}
         </Box>
 

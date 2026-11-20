@@ -42,7 +42,7 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TestOn = Parameters<Extract<Parameters<typeof test>[1], (...args: any[]) => any>>[1]
 
-function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown; runs?: { argv: string[]; stdin?: string }[]; ownClock?: boolean } = {}) {
+function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown; runs?: { argv: string[]; stdin?: string }[]; ownClock?: boolean; turns?: number } = {}) {
   const store = new Map<string, unknown>()
   on('env.get', (_, e) => ({ value: (e as unknown as { name: string }).name === 'HOME' ? '/home/t' : undefined }))
   on('fs.exists', (_, e) => { const p = (e as unknown as { path: string }).path; return { value: files.has(p) || [...files.keys()].some(k => k.startsWith(p + '/')) } })
@@ -64,6 +64,7 @@ function engine(on: TestOn, branch: string, cost: { usd: number; percent: number
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: '/work/app' }))
   on('session.id', () => ({ value: 'sess-1' }))
+  on('session.turns', () => ({ value: opts.turns ?? 0 }))
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 200_000, percent: cost.percent }, cost: { usd: cost.usd } } }))
   if (!opts.ownClock) on('clock.now', () => ({ value: opts.now ?? 1_000_000 }))
   if (!opts.ownClock) on('clock.every', () => ({ value: undefined }))
@@ -554,5 +555,19 @@ test('Start fresh: the press returns at once; the summary is a continuation, and
   // Still there for the next time, with the last one named.
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /Last one: \.claude\/handoffs\/2026-11-20-19-28\.md/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+
+test('the pane reads the conversation live: a long session shows as long even right after a reload', async ($, on) => {
+  const cost = { usd: 57.43, percent: 81 }
+  const store = engine(on, 'KAN-461-osm', cost, new Map(), [], { turns: 140 })
+  store.set('migrated:/work/app', true)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true }) // nothing counted by this copy yet
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^\$57\.43$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^140 prompts/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /grown long/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', key: 'optimize' })).toBeTruthy()
   await ui.unmount()
 })
