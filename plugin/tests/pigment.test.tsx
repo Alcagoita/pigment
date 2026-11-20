@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { activeFor, addPrompt, duration, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom } from '../hooks/lib'
+import { activeFor, addPrompt, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom } from '../hooks/lib'
 import type { PromptCost } from '../types'
 
 const pane = (title: string) => ({
@@ -40,7 +40,7 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TestOn = Parameters<Extract<Parameters<typeof test>[1], (...args: any[]) => any>>[1]
 
-function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string) => unknown } = {}) {
+function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown } = {}) {
   const store = new Map<string, unknown>()
   on('fs.exists', (_, e) => { const p = (e as unknown as { path: string }).path; return { value: files.has(p) || [...files.keys()].some(k => k.startsWith(p + '/')) } })
   on('fs.read', (_, e) => ({ value: files.get((e as unknown as { path: string }).path) ?? '' }))
@@ -52,7 +52,7 @@ function engine(on: TestOn, branch: string, cost: { usd: number; percent: number
   })
   on('http.fetch', (_, e) => {
     const a = e as unknown as { url: string; init?: { body?: string } }
-    if (opts.fetch) return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(opts.fetch(a.url)) } }
+    if (opts.fetch) { posts.push(a.url + ' ' + (a.init?.body ?? '')); return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(opts.fetch(a.url, a.init?.body)) } } }
     posts.push(a.url + ' ' + (a.init?.body ?? ''))
     return { value: { status: 204, ok: true, headers: {}, text: '' } }
   })
@@ -264,4 +264,79 @@ test('The sprint with Jira: In development with time, and Worth a look', {
     expect(await ui.find({ type: 'Text', text: /^Your session on KAN-045 has been quiet for 1h 20m\.$/ })).toBeTruthy()
     await ui.unmount()
   }
+})
+
+
+test('worklog and summary helpers', () => {
+  expect(isLogStatus('testing', 'indeterminate', 'Testing')).toBe(true)
+  expect(isLogStatus('In Development', 'indeterminate', 'Testing')).toBe(false)
+  expect(isLogStatus('Concluído', 'done', 'Testing')).toBe(true)
+  expect(jiraStarted(Date.UTC(2026, 10, 20, 9, 30))).toBe('2026-11-20T09:30:00.000+0000')
+  expect(worklogSeconds(5 * 3_600_000 + 10 * 60_000 + 20_000)).toBe(18_600)
+  expect(worklogSeconds(10_000)).toBe(60)
+  const H = 3_600_000
+  const sum = summaryMarkdown('Sprint 21', [
+    { ticket: 'KAN-55', summary: 'Invite | link', usd: 10, prompts: 30, lastAt: 0, activeMs: 5 * H, estimateMs: 6 * H, stage: 'done' },
+    { ticket: 'KAN-88', usd: 33.1, prompts: 90, lastAt: 0, activeMs: 26 * H, stage: 'doing' },
+  ], { startDate: '2026-11-03T09:00:00.000Z', endDate: '2026-11-17T18:00:00.000Z', hasEnded: true, writtenAt: Date.UTC(2026, 10, 18) })
+  expect(Math.round(sum.usd * 100)).toBe(4310)
+  expect(sum.prompts).toBe(120)
+  expect(sum.activeMs).toBe(31 * H)
+  expect(sum.text).toMatch(/^# Sprint 21\n/)
+  expect(sum.text).toMatch(/- \*\*Cost:\*\* \$43\.10/)
+  expect(sum.text).toMatch(/- \*\*Worked time:\*\* 1d 7h/)
+  expect(sum.text).toMatch(/\| KAN-88 \|  \| \$33\.10 \| 90 \| 1d 2h \|  \| in development \|/)
+  expect(sum.text).toMatch(/\| KAN-55 \| Invite \/ link \| \$10\.00 \| 30 \| 5h \| 6h \| done \|/)
+})
+
+test('a task in Testing: offer to log the worked time, then log it in Jira', {
+  options: { jiraSite: 'team.atlassian.net', jiraEmail: 'ana@example.com', jiraToken: 't' },
+}, async ($, on) => {
+  const posts: string[] = []
+  const store = engine(on, 'KAN-55-invite', { usd: 0, percent: 10 }, new Map(), posts, {
+    now: Date.UTC(2026, 10, 20, 18),
+    fetch: url => (url.endsWith('/issue/KAN-55?fields=status') ? { fields: { status: { name: 'Testing', statusCategory: { key: 'indeterminate' } } } } : {}),
+  })
+  store.set('migrated:/work/app', true)
+  store.set('ledger:/work/app', { tasks: { 'KAN-55': { ticket: 'KAN-55', usd: 4, prompts: 10, lastAt: 0, activeMs: 5 * 3_600_000 + 10 * 60_000 } }, sessions: {} })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^KAN-55 is in Testing$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^Log the 5h 10m you worked on it in Jira\?$/ })).toBeTruthy()
+  await ui.press({ key: 'log-it' })
+  const log = posts.find(p => p.includes('/rest/api/3/issue/KAN-55/worklog '))
+  expect(log).toBeTruthy()
+  const body = JSON.parse(log!.slice(log!.indexOf(' ') + 1))
+  expect(body.timeSpentSeconds).toBe(18_600)
+  expect(store.get('logged:/work/app:KAN-55')).toBe(5 * 3_600_000 + 10 * 60_000)
+  expect(await ui.find({ type: 'Text', text: /is in Testing/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('when the open sprint changes, the ended one gets its summary file', {
+  options: { role: 'manager', jiraSite: 'team.atlassian.net', jiraProject: 'KAN', jiraEmail: 'm@example.com', jiraToken: 't' },
+}, async ($, on) => {
+  const files = new Map<string, string>()
+  const store = engine(on, 'develop', { usd: 0, percent: 10 }, files, [], {
+    now: Date.UTC(2026, 10, 18, 9),
+    fetch: url => url.includes('/board?') ? { values: [{ id: 7 }] }
+      : url.includes('/sprint?state=active') ? { values: [{ id: 22, name: 'Sprint 22' }] }
+      : url.includes('/sprint/21/issue') ? { issues: [{ key: 'KAN-55', fields: { summary: 'Invite link', status: { statusCategory: { key: 'done' } }, resolutiondate: '2026-11-15T10:00:00.000Z' } }] }
+      : { issues: [] },
+  })
+  store.set('migrated:/work/app', true)
+  store.set('ledger:/work/app', { tasks: { 'KAN-55': { ticket: 'KAN-55', usd: 10, prompts: 30, lastAt: 0, activeMs: 5 * 3_600_000 } }, sessions: {} })
+  store.set('sprintSeen:/work/app', { id: 21, name: 'Sprint 21', startDate: '2026-11-03T09:00:00.000Z', endDate: '2026-11-17T18:00:00.000Z' })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+
+  const md = files.get('/work/app/.pigment/sprints/sprint-21.md') ?? ''
+  expect(md).toMatch(/^# Sprint 21\n/)
+  expect(md).toMatch(/\$10\.00/)
+  expect(store.get('summarized:/work/app:21')).toBe(true)
+  const ui = await $.ui.mount({ ...pane('The sprint'), surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^Sprint 21 has ended$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^\$10\.00 · 30 prompts · 5h worked$/ })).toBeTruthy()
+  await ui.unmount()
 })

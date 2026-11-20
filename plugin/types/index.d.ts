@@ -34,6 +34,8 @@ export type Work = {
   pendingAt?: number
   /** When the last turn ended, for the reading-and-thinking time before the next prompt. */
   lastEndAt?: number
+  /** The task reached the status where time is logged (Testing), with this person's worked time not logged yet. */
+  logOffer?: { ticket: string; status: string; ms: number; isBusy?: boolean }
   snoozed: Signal[]
   isBusy: boolean
   handoffPath?: string
@@ -75,9 +77,15 @@ export type Sprint = {
   live: LiveSession[]
   /** Sessions still open but quiet for a while. */
   quiet: LiveSession[]
+  /** Jira's id for the open sprint, to notice when it ends. */
+  id?: number
+  /** The last sprint summary written, to show and copy. */
+  summary?: SprintSummary
   updatedAt: number
   note?: string
 }
+
+export type SprintSummary = { name: string; path: string; text: string; usd: number; prompts: number; activeMs: number; hasEnded: boolean }
 
 /** What this computer keeps across sessions, per project folder. */
 export type Ledger = {

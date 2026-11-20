@@ -325,3 +325,66 @@ export function sprintIssue(i: JiraIssue): SprintIssue {
   }
 }
 
+
+// ── Jira worklog ─────────────────────────────────────────────────────
+
+/** Worked time is logged from this many minutes; less isn't worth a worklog. */
+export const MIN_LOG_MS = 5 * 60_000
+
+/** The status a task's time is logged at (`Testing` by default), matched without case; Done counts too. */
+export function isLogStatus(name: string, category: string | undefined, logOn: string): boolean {
+  return name.trim().toLowerCase() === logOn.trim().toLowerCase() || category === 'done'
+}
+
+/** Jira's `started` format: 2026-11-20T10:00:00.000+0000. */
+export function jiraStarted(ms: number): string {
+  return new Date(ms).toISOString().replace('Z', '+0000')
+}
+
+/** Jira takes whole minutes; round to the nearest, at least one. */
+export function worklogSeconds(ms: number): number {
+  return Math.max(60, Math.round(ms / 60_000) * 60)
+}
+
+// ── Sprint summary ───────────────────────────────────────────────────
+
+export function sprintSlug(name: string): string {
+  return slug(name) || 'sprint'
+}
+
+/** A plain Markdown summary of a sprint: totals, then one row per task. Numbers only. */
+export function summaryMarkdown(
+  name: string,
+  tasks: TaskCost[],
+  opts: { startDate?: string; endDate?: string; hasEnded: boolean; writtenAt: number },
+): { text: string; usd: number; prompts: number; activeMs: number } {
+  const usdTotal = tasks.reduce((n, t) => n + t.usd, 0)
+  const prompts = tasks.reduce((n, t) => n + t.prompts, 0)
+  const activeMs = tasks.reduce((n, t) => n + (t.activeMs ?? 0), 0)
+  const day = (iso?: string) => (iso ? iso.slice(0, 10) : '')
+  const when = opts.startDate || opts.endDate ? `${day(opts.startDate)} → ${day(opts.endDate)}` : ''
+  const rows = [...tasks]
+    .sort((a, b) => b.usd - a.usd)
+    .map(t => {
+      const est = t.estimateMs ? duration(t.estimateMs) : ''
+      const state = t.stage === 'done' || t.doneAt !== undefined ? 'done' : t.stage === 'doing' ? 'in development' : 'to do'
+      return `| ${t.ticket} | ${(t.summary ?? '').replace(/\|/g, '/')} | ${usd(t.usd)} | ${t.prompts} | ${t.activeMs ? duration(t.activeMs) : ''} | ${est} | ${state} |`
+    })
+  const text = [
+    `# ${name}${opts.hasEnded ? '' : ' (so far)'}`,
+    '',
+    when ? `${when}  ` : '',
+    `Written by Pigment on ${new Date(opts.writtenAt).toISOString().slice(0, 10)}.`,
+    '',
+    `- **Cost:** ${usd(usdTotal)} (an estimate at list price)`,
+    `- **Prompts:** ${prompts}`,
+    `- **Worked time:** ${duration(activeMs)} (time in sessions; pauses over 15 minutes don't count)`,
+    `- **Tasks:** ${tasks.length}, ${tasks.filter(t => t.stage === 'done' || t.doneAt !== undefined).length} done`,
+    '',
+    '| Task | Summary | Cost | Prompts | Worked | Estimate | State |',
+    '|---|---|---|---|---|---|---|',
+    ...rows,
+    '',
+  ].filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n')
+  return { text, usd: usdTotal, prompts, activeMs }
+}

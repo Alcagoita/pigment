@@ -1,6 +1,6 @@
 {
   "name": "pigment",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "What your prompts, tasks and sessions cost, beside the chat — and for a manager, the sprint by task and who is working now. A calm nudge to start fresh when a conversation gets long.",
   "author": {
     "name": "Olegário Nascimento"
@@ -46,7 +46,7 @@
     "jiraSite": {
       "type": "string",
       "title": "Jira site",
-      "description": "Manager view: the Jira site for the open sprint, e.g. yourteam.atlassian.net. Can also live in .pigment/config.json.",
+      "description": "Your Jira site, e.g. yourteam.atlassian.net. Manager: for the sprint list. Developer: to log worked time when a task reaches Testing. Can also live in .pigment/config.json.",
       "default": ""
     },
     "jiraProject": {
@@ -64,9 +64,15 @@
     "jiraToken": {
       "type": "string",
       "title": "Jira API token",
-      "description": "Read-only use: the open sprint's tickets.",
+      "description": "A Jira API token: reads the sprint, and logs worked time only when you press Log it in Jira.",
       "sensitive": true,
       "default": ""
+    },
+    "logOnStatus": {
+      "type": "string",
+      "title": "Log time at status",
+      "description": "When your task reaches this Jira status, I offer to log your worked time on it. Done always counts too.",
+      "default": "Testing"
     }
   }
 }

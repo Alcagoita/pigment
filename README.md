@@ -27,6 +27,7 @@ Pick one in `/config`, under Pigment (**View**).
 - **This task · KAN-55** — every session on that ticket together
 - **This session** — the running total, and how long the conversation has grown
 - **Earlier prompts** — newest first
+- **Log your time** — when your task reaches **Testing** in Jira (or Done), Pigment offers: *"KAN-55 is in Testing. Log the 5h 10m you worked on it in Jira?"* Press **Log it in Jira** and it adds a worklog; press **Not now** and nothing is sent. Only your own worked time, never logged twice. Needs your Jira site, email and API token in `/config`; the status is a setting (**Log time at status**).
 
 **The sprint** (manager)
 - **Sprint 22 so far** — the total, from Jira's open sprint
@@ -34,6 +35,7 @@ Pick one in `/config`, under Pigment (**View**).
 - **In development** — every task in an in-progress status, with its time so far (`KAN-045 · 5h of 6h`, `KAN-96 · 2h`); the ones worth a look come first
 - **By task** — each ticket in the sprint with its cost and time; spending on branches without a ticket shows as "No ticket"
 - **Working now** — each session active in the last ten minutes, with its person, task and running cost
+- **Sprint summary** — when Jira's open sprint ends, Pigment writes `.pigment/sprints/sprint-22.md` with the total cost, prompts and worked time, and a row per task (cost, prompts, worked, estimate, state). **Write a summary now** does the same for the sprint so far. The card offers **Copy the summary** for a retro or a release note.
 
 **Time is worked time**, not the clock on the wall: each prompt's turn, plus the reading and thinking before it when the gap is under 15 minutes. Longer pauses, nights and weekends don't count. Every person's sessions on a ticket add up.
 

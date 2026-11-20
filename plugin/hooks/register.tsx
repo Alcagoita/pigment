@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
   activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, quietFrom, parseConfig, parseLines,
-  prune, reasonText, signalsFor, sprintIssue, sprintRows, statusFor, ticketFrom, timeFor, timeText, toLine, tokens, usd,
+  isLogStatus, jiraStarted, MIN_LOG_MS, prune, reasonText, signalsFor, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import type { JiraIssue, Line, ProjectConfig, SprintIssue, StorageStatus } from './lib'
 
@@ -19,12 +19,12 @@ const EMPTY: Work = {
   storage: 'unchosen', waiting: 0, storageCard: 'ask',
 }
 // Bump a tag when its type's fields change: older stored values are read as the initial value.
-const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-3' })
-const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-2' })
+const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-4' })
+const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-3' })
 
 type Options = {
   role?: string; projectFolder?: string; person?: string; serverUrl?: string; teamKey?: string
-  jiraSite?: string; jiraEmail?: string; jiraToken?: string; jiraProject?: string
+  jiraSite?: string; jiraEmail?: string; jiraToken?: string; jiraProject?: string; logOnStatus?: string
 }
 
 const HANDOFF_PROMPT = `Write a handoff note so a fresh session can continue this work without the long history.
@@ -43,6 +43,68 @@ type Ctx = {
   root: string; sessionId: string; lastBeat: number
   config: ProjectConfig | null; status: StorageStatus
   jiraSite: string; jiraProject: string
+  lastStatusCheck: number
+  refreshing?: Promise<void>
+}
+
+function jiraBase(c: Ctx) { return `https://${c.jiraSite.replace(/^https?:\/\//, '').replace(/\/+$/, '')}` }
+function jiraAuth(c: Ctx) { return { authorization: 'Basic ' + btoa(`${c.o.jiraEmail}:${c.o.jiraToken}`) } }
+function hasJiraLogin(c: Ctx) { return !!(c.jiraSite && c.o.jiraEmail && c.o.jiraToken) }
+const JIRA_KEY = /^[A-Z][A-Z0-9]{1,9}-\d+$/
+
+/** When this person's task reaches the logging status (Testing), offer to log their unlogged worked time. */
+async function checkLogOffer($: EngineInterface, c: Ctx, force = false) {
+  const w = await read($, work)
+  if (!w.isMeasured || !hasJiraLogin(c) || !JIRA_KEY.test(w.ticket)) return
+  const now = await $.clock.now()
+  if (!force && now - c.lastStatusCheck < 5 * 60_000) return
+  c.lastStatusCheck = now
+  let issue: { fields?: { status?: { name?: string; statusCategory?: { key?: string } } } }
+  try {
+    issue = (await getJson($, `${jiraBase(c)}/rest/api/3/issue/${w.ticket}?fields=status`, jiraAuth(c))) as typeof issue
+  } catch { return }
+  const name = issue.fields?.status?.name ?? ''
+  const ready = isLogStatus(name, issue.fields?.status?.statusCategory?.key, c.o.logOnStatus || 'Testing')
+  const worked = (await loadLedger($, c)).tasks[w.ticket]?.activeMs ?? 0
+  const logged = Number((await $.store.get(`logged:${c.root}:${w.ticket}`)) ?? 0)
+  const ms = worked - logged
+  await update($, work, x => ({ ...x, logOffer: ready && ms >= MIN_LOG_MS ? { ticket: w.ticket, status: name, ms } : undefined }))
+}
+
+async function logWork($: EngineInterface, c: Ctx, offer: { ticket: string; ms: number }) {
+  await update($, work, x => ({ ...x, logOffer: x.logOffer && { ...x.logOffer, isBusy: true } }))
+  const now = await $.clock.now()
+  const seconds = worklogSeconds(offer.ms)
+  try {
+    const r = await $.http.fetch(`${jiraBase(c)}/rest/api/3/issue/${offer.ticket}/worklog`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...jiraAuth(c) },
+      body: JSON.stringify({
+        timeSpentSeconds: seconds,
+        started: jiraStarted(now - seconds * 1000),
+        comment: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Worked time counted by Pigment: time in sessions, pauses over 15 minutes left out.' }] }] },
+      }),
+    })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  } catch {
+    await update($, work, x => ({ ...x, logOffer: x.logOffer && { ...x.logOffer, isBusy: false } }))
+    $.ui.toast(`I couldn't log the time on ${offer.ticket} in Jira. Nothing was logged; check the Jira settings and try again.`)
+    return
+  }
+  const key = `logged:${c.root}:${offer.ticket}`
+  await $.store.set(key, Number((await $.store.get(key)) ?? 0) + offer.ms)
+  await update($, work, x => ({ ...x, logOffer: undefined }))
+  $.ui.toast(`Logged ${duration(seconds * 1000)} on ${offer.ticket} in Jira.`)
+}
+
+/** Writes `.pigment/sprints/<sprint>.md` and shows it in the sprint view. */
+async function writeSummary($: EngineInterface, c: Ctx, name: string, tasks: TaskCost[], dates: { startDate?: string; endDate?: string }, hasEnded: boolean) {
+  const now = await $.clock.now()
+  const sum = summaryMarkdown(name, tasks, { ...dates, hasEnded, writtenAt: now })
+  const path = `.pigment/sprints/${sprintSlug(name)}.md`
+  await $.fs.write(`${c.root}/${path}`, sum.text)
+  await update($, sprint, x => (x ? { ...x, summary: { name, path, text: sum.text, usd: sum.usd, prompts: sum.prompts, activeMs: sum.activeMs, hasEnded } } : x))
+  return path
 }
 
 const CONFIG = '.pigment/config.json'
@@ -155,7 +217,13 @@ async function getJson($: EngineInterface, url: string, headers: Record<string, 
   return JSON.parse(r.text) as unknown
 }
 
-type JiraSprint = { name: string; issues: SprintIssue[] }
+type JiraSprint = { id: number; name: string; startDate?: string; endDate?: string; issues: SprintIssue[] }
+
+async function sprintIssues($: EngineInterface, c: Ctx, id: number): Promise<SprintIssue[]> {
+  const fields = 'summary,status,resolutiondate,timeoriginalestimate'
+  const page = (await getJson($, `${jiraBase(c)}/rest/agile/1.0/sprint/${id}/issue?fields=${fields}&expand=changelog&maxResults=200`, jiraAuth(c))) as { issues?: JiraIssue[] }
+  return (page.issues ?? []).map(sprintIssue)
+}
 
 /** The open sprint's tickets from Jira, or null when there is none or Jira is not set up. */
 async function jiraSprint($: EngineInterface, c: Ctx): Promise<JiraSprint | null> {
@@ -165,17 +233,22 @@ async function jiraSprint($: EngineInterface, c: Ctx): Promise<JiraSprint | null
   const auth = { authorization: 'Basic ' + btoa(`${o.jiraEmail}:${o.jiraToken}`) }
   const boards = (await getJson($, `${site}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(c.jiraProject)}`, auth)) as { values?: { id: number }[] }
   for (const b of boards.values ?? []) {
-    const sprints = (await getJson($, `${site}/rest/agile/1.0/board/${b.id}/sprint?state=active`, auth).catch(() => ({}))) as { values?: { id: number; name: string }[] }
+    const sprints = (await getJson($, `${site}/rest/agile/1.0/board/${b.id}/sprint?state=active`, auth).catch(() => ({}))) as { values?: { id: number; name: string; startDate?: string; endDate?: string }[] }
     const s = sprints.values?.[0]
     if (!s) continue
-    const fields = 'summary,status,resolutiondate,timeoriginalestimate'
-    const page = (await getJson($, `${site}/rest/agile/1.0/sprint/${s.id}/issue?fields=${fields}&expand=changelog&maxResults=200`, auth)) as { issues?: JiraIssue[] }
-    return { name: s.name, issues: (page.issues ?? []).map(sprintIssue) }
+    return { id: s.id, name: s.name, startDate: s.startDate, endDate: s.endDate, issues: await sprintIssues($, c, s.id) }
   }
   return null
 }
 
-async function refreshSprint($: EngineInterface, c: Ctx) {
+/** One refresh at a time: a caller arriving mid-refresh waits for it, then refreshes again. */
+async function refreshSprint($: EngineInterface, c: Ctx): Promise<void> {
+  if (c.refreshing) await c.refreshing.catch(() => undefined)
+  c.refreshing = doRefresh($, c)
+  try { await c.refreshing } finally { c.refreshing = undefined }
+}
+
+async function doRefresh($: EngineInterface, c: Ctx) {
   const now = await $.clock.now()
   let note: string | undefined
   let js: JiraSprint | null = null
@@ -225,7 +298,22 @@ async function refreshSprint($: EngineInterface, c: Ctx) {
     updatedAt: now,
     note,
   }
-  await update($, sprint, () => next)
+  await update($, sprint, x => ({ ...next, summary: x?.summary }))
+
+  // A sprint that was open last time and isn't now has ended: write its summary once.
+  if (c.hasJira && !note) {
+    const seenKey = `sprintSeen:${c.root}`
+    const seen = (await $.store.get(seenKey)) as { id: number; name: string; startDate?: string; endDate?: string } | undefined
+    if (seen && seen.id !== js?.id && !(await $.store.get(`summarized:${c.root}:${seen.id}`))) {
+      try {
+        const ended = sprintRows(costs, await sprintIssues($, c, seen.id), now)
+        const path = await writeSummary($, c, seen.name, ended, seen, true)
+        await $.store.set(`summarized:${c.root}:${seen.id}`, true)
+        $.ui.toast(`${seen.name} has ended. Its summary is in ${path}.`)
+      } catch { /* try again next refresh */ }
+    }
+    if (js) await $.store.set(seenKey, { id: js.id, name: js.name, startDate: js.startDate, endDate: js.endDate })
+  }
 }
 
 async function beat($: EngineInterface, c: Ctx, w: Work) {
@@ -258,6 +346,7 @@ export const register: Register = (on, options) => {
     status: 'unchosen',
     jiraSite: '',
     jiraProject: '',
+    lastStatusCheck: 0,
   }
   const role = c.role
 
@@ -282,6 +371,7 @@ export const register: Register = (on, options) => {
 
     await $.command.register({ name: 'pigment', description: 'Show what your work, your task and the sprint cost' })
     if (isMeasured || role === 'manager') void $.ui.open({ id: PANE, title: TITLES[role] })
+    void checkLogOffer($, c, true)
     if (role === 'manager') {
       void refreshSprint($, c)
       $.clock.every(REFRESH_MS, () => void refreshSprint($, c))
@@ -291,7 +381,7 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'pigment' }, async $ => {
     await $.ui.open({ id: PANE, title: TITLES[role] })
-    if (role === 'manager') void refreshSprint($, c)
+    if (role === 'manager') await refreshSprint($, c)
     return { text: role === 'manager' ? 'The sprint view is open.' : 'Your work view is open.' }
   })
 
@@ -356,6 +446,7 @@ export const register: Register = (on, options) => {
       $.ui.toast("I've got a suggestion in Your work, whenever you're ready.")
     }
     if (role === 'manager') void refreshSprint($, c)
+    void checkLogOffer($, c)
     return result
   })
 
@@ -455,6 +546,21 @@ export const register: Register = (on, options) => {
             {s.note && <Text dimColor>{s.note}</Text>}
           </Box>
 
+          {s.summary && (
+            <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
+              <Text bold>{s.summary.hasEnded ? `${s.summary.name} has ended` : `${s.summary.name} so far`}</Text>
+              <Text>{usd(s.summary.usd)} · {s.summary.prompts} prompts · {duration(s.summary.activeMs)} worked</Text>
+              <Text dimColor>Saved to {s.summary.path}</Text>
+              <Box gap={1}>
+                <Button key="summary-copy" label="Copy the summary" onPress={async () => {
+                  const r = await $.ui.copy({ text: s.summary?.text ?? '', surface: e.surface })
+                  $.ui.toast(r.isCopied ? 'Copied.' : `It's in ${s.summary?.path}.`)
+                }} />
+                <Button key="summary-close" label="Close" onPress={() => update($, sprint, x => (x ? { ...x, summary: undefined } : x))} />
+              </Box>
+            </Box>
+          )}
+
           {(look || quiet.length > 0) && (
             <Box flexDirection="column" borderStyle="round" paddingX={1}>
               <Text bold>Worth a look</Text>
@@ -498,6 +604,14 @@ export const register: Register = (on, options) => {
               </Text>
             ))}
           </Box>
+          {s.tasks.length > 0 && (
+            <Box>
+              <Button key="summary-now" label="Write a summary now" onPress={async () => {
+                const path = await writeSummary($, c, s.name ?? 'The last two weeks', s.tasks, {}, false)
+                $.ui.toast(`Saved to ${path}.`)
+              }} />
+            </Box>
+          )}
           <Text dimColor>Time is what was worked in sessions: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.</Text>
           {estimate}
         </Box>
@@ -537,6 +651,18 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column" gap={1}>
         {storageCard}
+        {w.logOffer && (
+          <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
+            <Text bold>{w.logOffer.ticket} is in {w.logOffer.status}</Text>
+            <Text>Log the {duration(w.logOffer.ms)} you worked on it in Jira?</Text>
+            <Text dimColor>Worked time is time in sessions; pauses over 15 minutes are left out.</Text>
+            <Box gap={1}>
+              <Button key="log-it" variant="primary" label={w.logOffer.isBusy ? 'Logging…' : 'Log it in Jira'}
+                onPress={() => { const o = w.logOffer; return o && !o.isBusy ? logWork($, c, o) : undefined }} />
+              <Button key="log-later" label="Not now" onPress={() => update($, work, x => ({ ...x, logOffer: undefined }))} />
+            </Box>
+          </Box>
+        )}
         <Box flexDirection="column">
           <Text dimColor>This prompt</Text>
           <Text bold>{last ? usd(last.usd) : '—'}</Text>
