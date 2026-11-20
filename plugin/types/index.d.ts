@@ -42,6 +42,8 @@ export type Work = {
   /** Where the numbers go: chosen yet, on this computer, the team cloud, or the cloud waiting for this person's key. */
   storage: 'unchosen' | 'local' | 'cloud' | 'cloud-needs-key'
   serverUrl?: string
+  /** The session these numbers belong to, so a reload keeps them. */
+  sessionId?: string
   /** Rows waiting to be written to the chosen place. */
   waiting: number
   storageCard: 'ask' | 'cloud-help' | 'hidden'

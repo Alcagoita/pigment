@@ -20,7 +20,7 @@ const EMPTY: Work = {
   storage: 'unchosen', waiting: 0, storageCard: 'ask',
 }
 // Bump a tag when its type's fields change: older stored values are read as the initial value.
-const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-4' })
+const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-5' })
 const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-3' })
 // Which lists the person expanded past their first three rows.
 const open = atom({ plugin: 'pigment', key: 'open' } as const, {}, { shape: 'open-1' })
@@ -411,8 +411,16 @@ export const register: Register = (on, options) => {
       waiting = await flush($, c)
       hidden = (await $.store.get(`cardHidden:${c.root}:${c.status}`)) === true
     }
-    await update($, work, (): Work => ({
-      ...EMPTY, isMeasured, folder: c.folder, role, ticket, taskUsd: l.tasks[ticket]?.usd ?? 0,
+    // A reload (the mod changed, or the engine replaced its copy) is the same session: keep its numbers.
+    await update($, work, (prev): Work => ({
+      ...EMPTY,
+      ...(prev.sessionId === c.sessionId ? {
+        prompts: prev.prompts, sessionUsd: prev.sessionUsd, hasUnknownPrice: prev.hasUnknownPrice,
+        contextPercent: prev.contextPercent, snoozed: prev.snoozed, handoffPath: prev.handoffPath,
+        lastEndAt: prev.lastEndAt, logOffer: prev.logOffer,
+      } : {}),
+      sessionId: c.sessionId,
+      isMeasured, folder: c.folder, role, ticket, taskUsd: l.tasks[ticket]?.usd ?? 0,
       storage: c.status, serverUrl: c.server || undefined, waiting,
       storageCard: (c.status === 'unchosen' || c.status === 'cloud-needs-key') && !hidden ? 'ask' : 'hidden',
     }))
@@ -650,7 +658,7 @@ export const register: Register = (on, options) => {
           </Box>
     ) : null
     // Always there, quietly: a fresh start whenever the person wants one, not only when I suggest it.
-    const freshLink = w0.isMeasured && !showCard && w0.prompts.length > 0 ? (
+    const freshLink = w0.isMeasured && !showCard && (w0.prompts.length > 0 || w0.sessionUsd > 0) ? (
       <Box flexDirection="column">
         <Button key="optimize-anyway" plain label={w0.isBusy ? 'Writing a summary…' : 'Start fresh with a summary'}
           onPress={w0.isBusy ? () => undefined : optimize} />
@@ -669,9 +677,10 @@ export const register: Register = (on, options) => {
       // A small developer figure for each person working right now; they leave when they stop.
       const team = teamNow(s.live, c.sessionId)
       const teamRow = (
-        <Box flexDirection="column">
+        <Box flexDirection="column" gap={1}>
+          <Text dimColor>Active developers in this project{team.length > 0 ? ` · ${team.length}` : ''}</Text>
           {team.length === 0
-            ? <Text dimColor>No developers working right now.</Text>
+            ? <Text dimColor>Nobody else is working right now.</Text>
             : (
               <Box flexDirection="row" flexWrap="wrap" gap={2}>
                 {team.map((d, i) => (

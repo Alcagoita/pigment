@@ -459,6 +459,7 @@ test('under the manager, one developer figure per person working now', { options
     expect(await ui.find({ type: 'Text', text: /^Ana$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^Rui$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^Bia$/ })).toBeFalsy()  // stopped working a while ago
+    expect(await ui.find({ type: 'Text', text: /^Active developers in this project · 2$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^Leo$/ })).toBeFalsy()  // closed the session
     await ui.unmount()
   }
@@ -505,5 +506,20 @@ test('"Not now" holds after a reload', async ($, on) => {
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true }) // what a reload runs again
   ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('a reload keeps the session numbers, so Start fresh stays', async ($, on) => {
+  const cost = { usd: 0.1, percent: 20 }
+  const store = engine(on, 'KAN-88-share', cost)
+  store.set('migrated:/work/app', true)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'Hi' } as never)
+  cost.usd = 0.2
+  await $.turn.complete(finish)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true }) // the reload runs session.start again
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^1 prompt/ })).toBeTruthy()
   await ui.unmount()
 })
