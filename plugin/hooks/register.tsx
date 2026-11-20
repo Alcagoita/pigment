@@ -43,9 +43,9 @@ Leave out: work that is already finished, other tasks, ideas for later, open que
 and anything only the person can do themselves (logins, settings, keys, accounts).
 Answer with the note alone.`
 
-/** The new session's first message: carry on with the same work, nothing else. */
-export function continueMessage(rel: string): string {
-  return `Let's continue this same work in a fresh session. Start a new session from the handoff in ${rel} and carry on with its "Carry on with" step. It's a continuation of what we're doing, not a new task: don't pick up anything else.`
+/** What the person pastes as the first message of a new session: the summary, then one line to carry on. */
+export function resumePrompt(summary: string): string {
+  return `${summary.trim()}\n\nCarry on with this work from where it stands above.`
 }
 
 type Ctx = {
@@ -128,10 +128,12 @@ async function startFresh($: EngineInterface, c: Ctx, surface: RenderSurface) {
     const stamp = new Date(await $.clock.now()).toISOString().slice(0, 16).replace(/[:T]/g, '-')
     const rel = `.claude/handoffs/${stamp}.md`
     await $.fs.write(`${c.root}/${rel}`, r.text)
-    await $.ui.copy({ text: r.text, surface })
-    await $.prompt.fill({ text: continueMessage(rel) })
+    // Nothing goes into this session's box: sending it here would make this session start the new one.
+    const copied = await $.ui.copy({ text: resumePrompt(r.text), surface })
     await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel }))
-    $.ui.toast('Summary saved and copied. Send the message in the box and we carry on, fresh.')
+    $.ui.toast(copied.isCopied
+      ? 'Ready. Open a new session and paste: it carries on from here.'
+      : `Ready. Open a new session and paste what's in ${rel}.`)
   } catch {
     await update($, work, x => ({ ...x, isBusy: false }))
     $.ui.toast("I couldn't write the summary this time. Nothing changed; try again in a moment.")
@@ -678,7 +680,7 @@ export const register: Register = (on, options) => {
     const freshCard = w0.isMeasured && showCard ? (
       <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
             <Text>{reasonText(signals, w0.prompts)}</Text>
-            <Text dimColor>I can write a short summary and start fresh with you. Nothing is lost.</Text>
+            <Text dimColor>I can write a short summary for you to paste into a new session, and you carry on from there. Nothing is lost.</Text>
             <Box gap={1}>
               <Button key="optimize" variant="primary" label={w0.isBusy ? 'Writing…' : 'Optimize now'} onPress={w0.isBusy ? () => undefined : optimize} />
               <Button key="snooze" label="Not now" onPress={() => update($, work, x => ({ ...x, snoozed: signalsFor({ ...x, contextPercent: w0.contextPercent }), snoozedAt: w0.contextPercent ?? 0 }))} />
@@ -690,7 +692,7 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         <Button key="optimize-anyway" plain label={w0.isBusy ? 'Writing a summary…' : 'Start fresh with a summary'}
           onPress={w0.isBusy ? () => undefined : optimize} />
-        <Text dimColor>I write where we are, copy it, and get a new session ready. Nothing is lost.{w0.handoffPath ? ` Last one: ${w0.handoffPath}` : ''}</Text>
+        <Text dimColor>I write where we are and copy it. Open a new session and paste: it carries on from here.{w0.handoffPath ? ` Last one: ${w0.handoffPath}` : ''}</Text>
       </Box>
     ) : null
 

@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { activeFor, addPrompt, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow } from '../hooks/lib'
 import { figureCells, figureSvg } from '../hooks/figures'
-import { continueMessage } from '../hooks/register'
+import { resumePrompt } from '../hooks/register'
 import type { PromptCost } from '../types'
 
 const pane = (title: string) => ({
@@ -527,16 +527,17 @@ test('a reload keeps the session numbers, so Start fresh stays', async ($, on) =
 })
 
 
-test('Start fresh: the press returns at once; the summary is a continuation, and the box says so', async ($, on) => {
+test('Start fresh: the press returns at once; a continuation is copied to paste, and nothing goes in this box', async ($, on) => {
   const clock = mock.clock(on, { now: Date.UTC(2026, 10, 20, 19, 28) })
   const files = new Map<string, string>()
   let forkPrompt = ''
   let filled = ''
+  let copied = ''
   const cost = { usd: 0.1, percent: 20 }
   const store = engine(on, 'KAN-88-share', cost, files, [], { ownClock: true })
   store.set('migrated:/work/app', true)
   on('model.fork', (_, e) => { forkPrompt = (e as unknown as { prompt: string }).prompt; return { value: { isAnswered: true, text: '## Working on\nKAN-88', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } } })
-  on('ui.copy', () => ({ value: { isCopied: true } }))
+  on('ui.copy', (_, e) => { copied = (e as unknown as { text: string }).text; return { value: { isCopied: true } } })
   on('prompt.fill', (_, e) => { filled = (e as unknown as { text: string }).text; return { isFilled: true } as never })
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
   await $.prompt.submit({ text: 'Hi' } as never)
@@ -545,13 +546,14 @@ test('Start fresh: the press returns at once; the summary is a continuation, and
 
   const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   await ui.press({ key: 'optimize-anyway' })
-  expect(filled).toBe('')            // the press only started it
+  expect(copied).toBe('')            // the press only started it
   await clock.advance(1)
   expect(forkPrompt).toMatch(/continuation of that one piece of work, not a to-do list/)
   expect(forkPrompt).toMatch(/Leave out:.*other tasks/s)
   expect(files.get('/work/app/.claude/handoffs/2026-11-20-19-28.md')).toBe('## Working on\nKAN-88')
-  expect(filled).toBe(continueMessage('.claude/handoffs/2026-11-20-19-28.md'))
-  expect(filled).toMatch(/not a new task/)
+  expect(copied).toBe(resumePrompt('## Working on\nKAN-88'))
+  expect(copied).toMatch(/Carry on with this work from where it stands above\.$/)
+  expect(filled).toBe('')            // never sent into this session
   // Still there for the next time, with the last one named.
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /Last one: \.claude\/handoffs\/2026-11-20-19-28\.md/ })).toBeTruthy()
