@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { activeFor, addPrompt, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom } from '../hooks/lib'
+import { figureCells, figureSvg } from '../hooks/figures'
 import type { PromptCost } from '../types'
 
 const pane = (title: string) => ({
@@ -402,4 +403,25 @@ test('Start fresh with a summary is always there once there is a prompt, in both
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
   expect(await ui.find({ type: 'Button', key: 'optimize' })).toBeFalsy()
   await ui.unmount()
+})
+
+test('each view opens with its figure and name', { options: { role: 'manager' } }, async ($, on) => {
+  const svg = figureSvg('manager')
+  expect(svg.startsWith('<svg')).toBe(true)
+  expect(svg).toMatch(/fill="#5b7fd4"/) // the magnifying glass
+  expect(figureSvg('developer')).toMatch(/fill="#f2f0ea"/) // the laptop
+  const t = figureCells('developer')
+  expect([t.columns, t.rows]).toEqual([18, 7])
+  expect(atob(t.cells).length).toBe(18 * 7 * 12)
+
+  const store = engine(on, 'develop', { usd: 0, percent: 10 })
+  store.set('migrated:/work/app', true)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface })
+    expect(await ui.find({ type: 'Text', text: /^Manager$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^Watching over the sprint$/ })).toBeTruthy()
+    await ui.unmount()
+  }
 })

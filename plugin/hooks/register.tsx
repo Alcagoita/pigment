@@ -6,6 +6,7 @@ import {
   activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, quietFrom, parseConfig, parseLines,
   isLogStatus, jiraStarted, MIN_LOG_MS, prune, reasonText, signalsFor, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
+import { figureCells, figureSvg } from './figures'
 import type { JiraIssue, Line, ProjectConfig, SprintIssue, StorageStatus } from './lib'
 
 const PANE = 'pigment'
@@ -510,6 +511,23 @@ export const register: Register = (on, options) => {
     }
 
     const w0 = await read($, work)
+    const { Raster, Svg } = $.ui.resolve(e) as unknown as {
+      Raster?: (p: { key: string; columns: number; rows: number; cells: string }) => JSX.Element
+      Svg?: (p: { source: string; alt: string }) => JSX.Element
+    }
+    const who = role === 'manager' ? 'Manager' : 'Developer'
+    const art = e.surface === 'terminal'
+      ? (Raster ? <Raster key="figure" {...figureCells(role)} /> : null)
+      : (Svg ? <Svg source={figureSvg(role)} alt={role === 'manager' ? 'A little orange block figure in a black hat, holding a magnifying glass' : 'A little orange block figure behind a laptop'} /> : null)
+    const header = (
+      <Box flexDirection="row" gap={2} alignItems="center">
+        {art}
+        <Box flexDirection="column">
+          <Text bold>{who}</Text>
+          <Text dimColor>{role === 'manager' ? 'Watching over the sprint' : 'At work on the tasks'}</Text>
+        </Box>
+      </Box>
+    )
     const host = (w0.serverUrl ?? '').replace(/^https?:\/\//, '')
     const setCard = (storageCard: Work['storageCard']) => update($, work, x => ({ ...x, storageCard }))
     let storageCard = null
@@ -614,6 +632,7 @@ export const register: Register = (on, options) => {
       }
       return (
         <Box flexDirection="column" gap={1}>
+          {header}
           {storageCard}
           {freshCard}
           <Box flexDirection="column">
@@ -708,6 +727,7 @@ export const register: Register = (on, options) => {
     const recent = [...w.prompts].reverse().slice(0, 50)
     return (
       <Box flexDirection="column" gap={1}>
+        {header}
         {storageCard}
         {w.logOffer && (
           <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
