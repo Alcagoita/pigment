@@ -369,3 +369,20 @@ test('a manager without the key sees Connect to the team server, not Developer s
   expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeFalsy()
   await ui.unmount()
 })
+
+test('the manager view also offers a fresh start when its own conversation grows long', { options: { role: 'manager' } }, async ($, on) => {
+  const cost = { usd: 0.5, percent: 30 }
+  const store = engine(on, 'KAN-88-share', cost)
+  store.set('migrated:/work/app', true)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'Plan the sprint' } as never)
+  cost.usd = 0.9
+  cost.percent = 72
+  await $.turn.complete(finish)
+  await $.command.run({ command: 'pigment', args: '' } as never)
+  const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /grown long/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', key: 'optimize' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^This session: \$0\.90, conversation 72% full$/ })).toBeTruthy()
+  await ui.unmount()
+})

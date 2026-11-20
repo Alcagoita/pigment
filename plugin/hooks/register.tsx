@@ -455,8 +455,8 @@ export const register: Register = (on, options) => {
     })
     const after = signalsFor(await read($, work))
     $.ui.status(`${usd(total)} this session`)
-    if (role === 'developer' && after.some(s => !before.includes(s))) {
-      $.ui.toast("I've got a suggestion in Your work, whenever you're ready.")
+    if (after.some(s => !before.includes(s))) {
+      $.ui.toast("I've got a suggestion in Pigment, whenever you're ready.")
     }
     if (role === 'manager') void refreshSprint($, c)
     void checkLogOffer($, c)
@@ -558,6 +558,39 @@ export const register: Register = (on, options) => {
       )
     }
 
+    const signals = signalsFor(w0)
+    const showCard = signals.length > 0 && signals.some(x => !w0.snoozed.includes(x))
+    const optimize = async () => {
+      await update($, work, x => ({ ...x, isBusy: true }))
+      $.ui.toast('Writing a short summary of where we are…')
+      const r = await $.model.fork({ prompt: HANDOFF_PROMPT })
+      if (!r.isAnswered) {
+        await update($, work, x => ({ ...x, isBusy: false }))
+        $.ui.toast("I couldn't write the summary this time. Nothing changed; try again in a moment.")
+        return
+      }
+      const stamp = new Date(await $.clock.now()).toISOString().slice(0, 16).replace(/[:T]/g, '-')
+      const rel = `.claude/handoffs/${stamp}.md`
+      await $.fs.write(`${c.root}/${rel}`, r.text)
+      await $.ui.copy({ text: r.text, surface: e.surface })
+      await $.prompt.fill({
+        text: `Let's continue in a fresh session. Start a new session from the handoff in ${rel} and pick up its next step.`,
+      })
+      await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel, snoozed: signalsFor(x) }))
+      $.ui.toast('Summary saved and copied. Send the message in the box and we start fresh.')
+    }
+
+    const freshCard = w0.isMeasured && showCard ? (
+      <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
+            <Text>{reasonText(signals, w0.prompts)}</Text>
+            <Text dimColor>I can write a short summary and start fresh with you. Nothing is lost.</Text>
+            <Box gap={1}>
+              <Button key="optimize" variant="primary" label={w0.isBusy ? 'Writing…' : 'Optimize now'} onPress={w0.isBusy ? () => undefined : optimize} />
+              <Button key="snooze" label="Not now" onPress={() => update($, work, x => ({ ...x, snoozed: signalsFor(x) }))} />
+            </Box>
+          </Box>
+    ) : null
+
     // ── Manager: The sprint ──────────────────────────────────────────
     if (role === 'manager') {
       const s = await read($, sprint)
@@ -574,11 +607,13 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column" gap={1}>
           {storageCard}
+          {freshCard}
           <Box flexDirection="column">
             <Text dimColor>{heading}</Text>
             <Text bold>{usd(s.total)}</Text>
             <Text dimColor>{s.tasks.length} {s.tasks.length === 1 ? 'task' : 'tasks'}, counted on {s.where}</Text>
             {s.note && <Text dimColor>{s.note}</Text>}
+            {w0.isMeasured && <Text dimColor>This session: {usd(w0.sessionUsd)}{w0.contextPercent !== undefined ? `, conversation ${Math.round(w0.contextPercent)}% full` : ''}</Text>}
           </Box>
 
           {s.summary && (
@@ -660,31 +695,8 @@ export const register: Register = (on, options) => {
     if (!w.isMeasured) {
       return <Text dimColor>This session is outside {w.folder}, so I'm not counting it.</Text>
     }
-    const signals = signalsFor(w)
-    const showCard = signals.length > 0 && signals.some(x => !w.snoozed.includes(x))
     const last = w.prompts[w.prompts.length - 1]
     const recent = [...w.prompts].reverse().slice(0, 50)
-
-    const optimize = async () => {
-      await update($, work, x => ({ ...x, isBusy: true }))
-      $.ui.toast('Writing a short summary of where we are…')
-      const r = await $.model.fork({ prompt: HANDOFF_PROMPT })
-      if (!r.isAnswered) {
-        await update($, work, x => ({ ...x, isBusy: false }))
-        $.ui.toast("I couldn't write the summary this time. Nothing changed; try again in a moment.")
-        return
-      }
-      const stamp = new Date(await $.clock.now()).toISOString().slice(0, 16).replace(/[:T]/g, '-')
-      const rel = `.claude/handoffs/${stamp}.md`
-      await $.fs.write(`${c.root}/${rel}`, r.text)
-      await $.ui.copy({ text: r.text, surface: e.surface })
-      await $.prompt.fill({
-        text: `Let's continue in a fresh session. Start a new session from the handoff in ${rel} and pick up its next step.`,
-      })
-      await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel, snoozed: signalsFor(x) }))
-      $.ui.toast('Summary saved and copied. Send the message in the box and we start fresh.')
-    }
-
     return (
       <Box flexDirection="column" gap={1}>
         {storageCard}
@@ -719,16 +731,7 @@ export const register: Register = (on, options) => {
 
         {w.contextPercent !== undefined && <Progress label="Conversation length" value={w.contextPercent / 100} />}
 
-        {showCard && (
-          <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
-            <Text>{reasonText(signals, w.prompts)}</Text>
-            <Text dimColor>I can write a short summary and start fresh with you. Nothing is lost.</Text>
-            <Box gap={1}>
-              <Button key="optimize" variant="primary" label={w.isBusy ? 'Writing…' : 'Optimize now'} onPress={w.isBusy ? () => undefined : optimize} />
-              <Button key="snooze" label="Not now" onPress={() => update($, work, x => ({ ...x, snoozed: signalsFor(x) }))} />
-            </Box>
-          </Box>
-        )}
+        {freshCard}
         {w.handoffPath && !showCard && <Text dimColor>Last summary: {w.handoffPath}</Text>}
 
         <Box flexDirection="column">
