@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
@@ -31,15 +31,22 @@ type Options = {
   jiraSite?: string; jiraEmail?: string; jiraToken?: string; jiraProject?: string; logOnStatus?: string
 }
 
-const HANDOFF_PROMPT = `Write a handoff note so a fresh session can continue this work without the long history.
-Markdown, under 300 words, only facts from this conversation, no tools:
-## Goal — the ticket and what "done" means
-## Done so far
-## In progress right now
-## Next steps — numbered, the very next one first
-## Decisions and rules to keep
-## Files that matter — paths
+const HANDOFF_PROMPT = `Write a handoff so a fresh session can carry on with the work this session is doing right now, without its long history.
+It is a continuation of that one piece of work, not a to-do list.
+Markdown, under 250 words, only facts from this conversation, no tools:
+## Working on — the task in progress right now: its ticket, its goal, what "done" means
+## Where it stands — what's finished in that task and what's half-done
+## Carry on with — the very next action in that task, then the one after
+## Keep in mind — decisions and rules that apply to it
+## Files — the paths that matter for it
+Leave out: work that is already finished, other tasks, ideas for later, open questions for another day,
+and anything only the person can do themselves (logins, settings, keys, accounts).
 Answer with the note alone.`
+
+/** The new session's first message: carry on with the same work, nothing else. */
+export function continueMessage(rel: string): string {
+  return `Let's continue this same work in a fresh session. Start a new session from the handoff in ${rel} and carry on with its "Carry on with" step. It's a continuation of what we're doing, not a new task: don't pick up anything else.`
+}
 
 type Ctx = {
   role: Role; folder: string; person: string; server: string; teamKey: string
@@ -111,6 +118,24 @@ async function writeSummary($: EngineInterface, c: Ctx, name: string, tasks: Tas
   await $.fs.write(`${c.root}/${path}`, sum.text)
   await update($, sprint, x => (x ? { ...x, summary: { name, path, text: sum.text, usd: sum.usd, prompts: sum.prompts, activeMs: sum.activeMs, hasEnded } } : x))
   return path
+}
+
+/** Writes the handoff, saves and copies it, and puts the continuation message in the prompt box. */
+async function startFresh($: EngineInterface, c: Ctx, surface: RenderSurface) {
+  try {
+    const r = await $.model.fork({ prompt: HANDOFF_PROMPT })
+    if (!r.isAnswered) throw new Error(r.reason)
+    const stamp = new Date(await $.clock.now()).toISOString().slice(0, 16).replace(/[:T]/g, '-')
+    const rel = `.claude/handoffs/${stamp}.md`
+    await $.fs.write(`${c.root}/${rel}`, r.text)
+    await $.ui.copy({ text: r.text, surface })
+    await $.prompt.fill({ text: continueMessage(rel) })
+    await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel, snoozed: signalsFor(x) }))
+    $.ui.toast('Summary saved and copied. Send the message in the box and we carry on, fresh.')
+  } catch {
+    await update($, work, x => ({ ...x, isBusy: false }))
+    $.ui.toast("I couldn't write the summary this time. Nothing changed; try again in a moment.")
+  }
 }
 
 const CONFIG = '.pigment/config.json'
@@ -627,24 +652,12 @@ export const register: Register = (on, options) => {
 
     const signals = signalsFor(w0)
     const showCard = signals.length > 0 && signals.some(x => !w0.snoozed.includes(x))
-    const optimize = async () => {
-      await update($, work, x => ({ ...x, isBusy: true }))
+    // The summary takes longer than a press may hold, so the press only starts it.
+    const optimize = () => {
+      if (w0.isBusy) return
+      void update($, work, x => ({ ...x, isBusy: true }))
       $.ui.toast('Writing a short summary of where we are…')
-      const r = await $.model.fork({ prompt: HANDOFF_PROMPT })
-      if (!r.isAnswered) {
-        await update($, work, x => ({ ...x, isBusy: false }))
-        $.ui.toast("I couldn't write the summary this time. Nothing changed; try again in a moment.")
-        return
-      }
-      const stamp = new Date(await $.clock.now()).toISOString().slice(0, 16).replace(/[:T]/g, '-')
-      const rel = `.claude/handoffs/${stamp}.md`
-      await $.fs.write(`${c.root}/${rel}`, r.text)
-      await $.ui.copy({ text: r.text, surface: e.surface })
-      await $.prompt.fill({
-        text: `Let's continue in a fresh session. Start a new session from the handoff in ${rel} and pick up its next step.`,
-      })
-      await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel, snoozed: signalsFor(x) }))
-      $.ui.toast('Summary saved and copied. Send the message in the box and we start fresh.')
+      $.clock.after(0, () => void startFresh($, c, e.surface))
     }
 
     const freshCard = w0.isMeasured && showCard ? (

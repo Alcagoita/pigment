@@ -1,7 +1,8 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 import { activeFor, addPrompt, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow } from '../hooks/lib'
 import { figureCells, figureSvg } from '../hooks/figures'
+import { continueMessage } from '../hooks/register'
 import type { PromptCost } from '../types'
 
 const pane = (title: string) => ({
@@ -41,7 +42,7 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TestOn = Parameters<Extract<Parameters<typeof test>[1], (...args: any[]) => any>>[1]
 
-function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown; runs?: { argv: string[]; stdin?: string }[] } = {}) {
+function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown; runs?: { argv: string[]; stdin?: string }[]; ownClock?: boolean } = {}) {
   const store = new Map<string, unknown>()
   on('env.get', (_, e) => ({ value: (e as unknown as { name: string }).name === 'HOME' ? '/home/t' : undefined }))
   on('fs.exists', (_, e) => { const p = (e as unknown as { path: string }).path; return { value: files.has(p) || [...files.keys()].some(k => k.startsWith(p + '/')) } })
@@ -64,8 +65,8 @@ function engine(on: TestOn, branch: string, cost: { usd: number; percent: number
   on('session.root', () => ({ value: '/work/app' }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 200_000, percent: cost.percent }, cost: { usd: cost.usd } } }))
-  on('clock.now', () => ({ value: opts.now ?? 1_000_000 }))
-  on('clock.every', () => ({ value: undefined }))
+  if (!opts.ownClock) on('clock.now', () => ({ value: opts.now ?? 1_000_000 }))
+  if (!opts.ownClock) on('clock.every', () => ({ value: undefined }))
   on('process.run', (_, e) => {
     const a = e as unknown as { argv: string[]; init?: { stdin?: string } }
     if (a.argv[0] === 'sh') {
@@ -521,5 +522,34 @@ test('a reload keeps the session numbers, so Start fresh stays', async ($, on) =
   const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /^1 prompt/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+
+test('Start fresh: the press returns at once; the summary is a continuation, and the box says so', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 10, 20, 19, 28) })
+  const files = new Map<string, string>()
+  let forkPrompt = ''
+  let filled = ''
+  const cost = { usd: 0.1, percent: 20 }
+  const store = engine(on, 'KAN-88-share', cost, files, [], { ownClock: true })
+  store.set('migrated:/work/app', true)
+  on('model.fork', (_, e) => { forkPrompt = (e as unknown as { prompt: string }).prompt; return { value: { isAnswered: true, text: '## Working on\nKAN-88', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } } })
+  on('ui.copy', () => ({ value: { isCopied: true } }))
+  on('prompt.fill', (_, e) => { filled = (e as unknown as { text: string }).text; return { isFilled: true } as never })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'Hi' } as never)
+  cost.usd = 0.2
+  await $.turn.complete(finish)
+
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  await ui.press({ key: 'optimize-anyway' })
+  expect(filled).toBe('')            // the press only started it
+  await clock.advance(1)
+  expect(forkPrompt).toMatch(/continuation of that one piece of work, not a to-do list/)
+  expect(forkPrompt).toMatch(/Leave out:.*other tasks/s)
+  expect(files.get('/work/app/.claude/handoffs/2026-11-20-19-28.md')).toBe('## Working on\nKAN-88')
+  expect(filled).toBe(continueMessage('.claude/handoffs/2026-11-20-19-28.md'))
+  expect(filled).toMatch(/not a new task/)
   await ui.unmount()
 })
