@@ -388,3 +388,14 @@ export function summaryMarkdown(
   ].filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n')
   return { text, usd: usdTotal, prompts, activeMs }
 }
+
+/** One entry per person working now (their most recent session), leaving out this session itself. */
+export function teamNow(live: LiveSession[], thisSession: string): LiveSession[] {
+  const byPerson = new Map<string, LiveSession>()
+  for (const s of live) {
+    if (s.session === thisSession) continue
+    const seen = byPerson.get(s.person)
+    if (!seen || s.lastAt > seen.lastAt) byPerson.set(s.person, s)
+  }
+  return [...byPerson.values()].sort((a, b) => a.person.localeCompare(b.person))
+}

@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
-  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, quietFrom, parseConfig, parseLines,
+  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, parseConfig, parseLines,
   isLogStatus, jiraStarted, MIN_LOG_MS, prune, reasonText, signalsFor, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import { figureCells, figureSvg } from './figures'
@@ -625,6 +625,27 @@ export const register: Register = (on, options) => {
       const heading = s.name ? `${s.name} so far` : 'The last two weeks'
       const doing = inDevelopment(s.tasks, now, s.source === 'jira')
       const look = lookText(s.tasks, now)
+      // A small developer figure for each person working right now; they leave when they stop.
+      const team = teamNow(s.live, c.sessionId)
+      const teamRow = (
+        <Box flexDirection="column">
+          {team.length === 0
+            ? <Text dimColor>No developers working right now.</Text>
+            : (
+              <Box flexDirection="row" flexWrap="wrap" gap={2}>
+                {team.map((d, i) => (
+                  <Box flexDirection="column" alignItems="center">
+                    {e.surface === 'terminal'
+                      ? (Raster ? <Raster key={`dev-${i}`} {...figureCells('developer')} /> : null)
+                      : (Svg ? <Svg source={figureSvg('developer', 2)} alt={`${d.person}, working on ${d.ticket}`} /> : null)}
+                    <Text>{d.person === 'me' ? 'You' : d.person}</Text>
+                    <Text dimColor>{d.ticket}</Text>
+                  </Box>
+                ))}
+              </Box>
+            )}
+        </Box>
+      )
       const quiet = (s.quiet ?? []).map(q => `${q.person === 'me' ? 'Your' : `${q.person}'s`} session on ${q.ticket} has been quiet for ${duration(now - q.lastAt)}.`)
       const mark = (t: TaskCost) => {
         const l = timeFor(t, now)?.look
@@ -633,6 +654,7 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column" gap={1}>
           {header}
+          {teamRow}
           {storageCard}
           {freshCard}
           <Box flexDirection="column">
