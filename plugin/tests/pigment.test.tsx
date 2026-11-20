@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { addPrompt, emptyLedger, isInside, liveFrom, NO_TICKET, signalsFor, sprintRows, ticketFrom } from '../hooks/lib'
+import { addPrompt, duration, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText } from '../hooks/lib'
 import type { PromptCost } from '../types'
 
 const pane = (title: string) => ({
@@ -40,7 +40,7 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TestOn = Parameters<Extract<Parameters<typeof test>[1], (...args: any[]) => any>>[1]
 
-function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = []) {
+function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string) => unknown } = {}) {
   const store = new Map<string, unknown>()
   on('fs.exists', (_, e) => { const p = (e as unknown as { path: string }).path; return { value: files.has(p) || [...files.keys()].some(k => k.startsWith(p + '/')) } })
   on('fs.read', (_, e) => ({ value: files.get((e as unknown as { path: string }).path) ?? '' }))
@@ -50,14 +50,19 @@ function engine(on: TestOn, branch: string, cost: { usd: number; percent: number
     const names = [...files.keys()].filter(k => k.startsWith(dir) && !k.slice(dir.length).includes('/')).map(k => k.slice(dir.length))
     return { value: names.map(name => ({ name, kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false })) }
   })
-  on('http.fetch', (_, e) => { const a = e as unknown as { url: string; init?: { body?: string } }; posts.push(a.url + ' ' + (a.init?.body ?? '')); return { value: { status: 204, ok: true, headers: {}, text: '' } } })
+  on('http.fetch', (_, e) => {
+    const a = e as unknown as { url: string; init?: { body?: string } }
+    if (opts.fetch) return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(opts.fetch(a.url)) } }
+    posts.push(a.url + ' ' + (a.init?.body ?? ''))
+    return { value: { status: 204, ok: true, headers: {}, text: '' } }
+  })
   on('command.register', () => ({ value: { command: 'pigment' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: '/work/app' }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 200_000, percent: cost.percent }, cost: { usd: cost.usd } } }))
-  on('clock.now', () => ({ value: 1_000_000 }))
+  on('clock.now', () => ({ value: opts.now ?? 1_000_000 }))
   on('clock.every', () => ({ value: undefined }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: branch + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('store.get', (_, e) => ({ value: store.get((e as unknown as { key: string }).key) }))
@@ -168,4 +173,77 @@ test('with the team key, prompts go to the team server, waiting ones first', { o
   const ui = await $.ui.mount({ ...pane('Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /Developer setup|Where should I keep/ })).toBeFalsy()
   await ui.unmount()
+})
+
+test('time per task: started until done, or until now while open; near and over its estimate', () => {
+  const H = 3_600_000
+  const now = 100 * H
+  const t045 = { ticket: 'KAN-045', usd: 4, prompts: 3, lastAt: now, startedAt: now - 5 * H, estimateMs: 6 * H, stage: 'doing' as const }
+  const t96 = { ticket: 'KAN-96', usd: 1, prompts: 1, lastAt: now, startedAt: now - 2 * H, stage: 'doing' as const }
+  const t12 = { ticket: 'KAN-12', usd: 2, prompts: 2, lastAt: now, startedAt: now - 30 * H, doneAt: now - 27 * H, estimateMs: 2 * H, stage: 'done' as const }
+  const late = { ticket: 'KAN-50', usd: 0, prompts: 0, lastAt: 0, startedAt: now - 7 * H, estimateMs: 6 * H, stage: 'doing' as const }
+
+  expect(timeText(t045, now)).toBe('5h of 6h')
+  expect(timeFor(t045, now)?.look).toBe('near')
+  expect(timeText(t96, now)).toBe('2h')
+  expect(timeFor(t96, now)?.look).toBe(null)
+  expect(timeText(t12, now)).toBe('3h, done')
+  expect(timeFor(t12, now)?.look).toBe(null) // done tasks never need a look
+  expect(timeFor(late, now)?.look).toBe('over')
+  expect(lookText([t045, t96], now)).toBe('KAN-045 has used 5h of its 6h.')
+  expect(lookText([late, t045], now)).toBe('KAN-50 has gone past its 6h: 7h so far. 1 more task needs a look too.')
+  expect(inDevelopment([t96, t12, t045, late], now, true).map(t => t.ticket)).toEqual(['KAN-50', 'KAN-045', 'KAN-96'])
+  expect(duration(45 * 60_000)).toBe('45m')
+  expect(duration(2 * H + 10 * 60_000)).toBe('2h 10m')
+  expect(duration(76 * H)).toBe('3d 4h')
+})
+
+test('Jira: started when it first moved, done when resolved, estimate in ms', () => {
+  const i = sprintIssue({
+    key: 'KAN-045',
+    fields: { summary: 'Invite link', status: { statusCategory: { key: 'indeterminate' } }, resolutiondate: null, timeoriginalestimate: 21_600 },
+    changelog: { histories: [
+      { created: '2026-11-20T10:00:00.000Z', items: [{ field: 'assignee' }] },
+      { created: '2026-11-20T09:00:00.000Z', items: [{ field: 'status' }] },
+    ] },
+  })
+  expect(i.startedAt).toBe(Date.parse('2026-11-20T09:00:00.000Z'))
+  expect(i.doneAt).toBe(undefined)
+  expect(i.estimateMs).toBe(6 * 3_600_000)
+  expect(i.stage).toBe('doing')
+  const d = sprintIssue({ key: 'KAN-1', fields: { status: { statusCategory: { key: 'done' } }, resolutiondate: '2026-11-21T12:00:00.000Z' } })
+  expect(d.stage).toBe('done')
+  expect(d.doneAt).toBe(Date.parse('2026-11-21T12:00:00.000Z'))
+})
+
+test('The sprint with Jira: In development with time, and Worth a look', {
+  options: { role: 'manager', jiraSite: 'team.atlassian.net', jiraProject: 'KAN', jiraEmail: 'm@example.com', jiraToken: 't' },
+}, async ($, on) => {
+  const H = 3_600_000
+  const NOW = 1_000_000_000
+  const iso = (ms: number) => new Date(ms).toISOString()
+  const cost = { usd: 0, percent: 10 }
+  engine(on, 'develop', cost, new Map(), [], { now: NOW, fetch: url =>
+    url.includes('/board?') ? { values: [{ id: 7 }] }
+      : url.includes('/sprint?state=active') ? { values: [{ id: 22, name: 'Sprint 22' }] }
+      : { issues: [
+          { key: 'KAN-045', fields: { summary: 'Invite link', status: { statusCategory: { key: 'indeterminate' } }, timeoriginalestimate: 6 * 3600 },
+            changelog: { histories: [{ created: iso(NOW - 5 * H), items: [{ field: 'status' }] }] } },
+          { key: 'KAN-96', fields: { summary: 'Share sheet', status: { statusCategory: { key: 'indeterminate' } } },
+            changelog: { histories: [{ created: iso(NOW - 2 * H), items: [{ field: 'status' }] }] } },
+          { key: 'KAN-10', fields: { summary: 'Later', status: { statusCategory: { key: 'new' } } } },
+        ] } })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...pane('The sprint'), surface })
+    expect(await ui.find({ type: 'Text', text: /^Sprint 22 so far$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^KAN-045 has used 5h of its 6h\.$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^In development$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /!  KAN-045 · 5h of 6h · Invite link/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /KAN-96 · 2h · Share sheet/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /KAN-10 · not started/ })).toBeFalsy()
+    await ui.unmount()
+  }
 })

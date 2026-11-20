@@ -30,8 +30,12 @@ Pick one in `/config`, under Pigment (**View**).
 
 **The sprint** (manager)
 - **Sprint 22 so far** — the total, from Jira's open sprint
-- **By task** — each ticket in the sprint with its cost; spending on branches without a ticket shows as "No ticket"
+- **Worth a look** — a task close to its estimate or past it: *"KAN-045 has used 5h of its 6h."*
+- **In development** — every task in an in-progress status, with its time so far (`KAN-045 · 5h of 6h`, `KAN-96 · 2h`); the ones worth a look come first
+- **By task** — each ticket in the sprint with its cost and time; spending on branches without a ticket shows as "No ticket"
 - **Working now** — each session active in the last ten minutes, with its person, task and running cost
+
+Time runs from when a task started until it's done, or until now while it's open, nights and weekends included. With Jira: started is the first time the ticket left its first status, done is when it was resolved, and the time it was given is its original estimate. A task is worth a look at 80% of its estimate. Without Jira, time starts at the first prompt on the ticket, and the list shows tasks worked on in the last three days.
 
 The ticket comes from the branch name: `KAN-55-invite-link` → KAN-55, `12-invite` → #12. A team that names branches after tickets needs nothing else.
 

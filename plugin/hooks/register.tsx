@@ -3,10 +3,10 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
-  addPrompt, ago, emptyLedger, fileFor, fromLines, isInside, liveFrom, NO_TICKET, parseConfig, parseLines,
-  prune, reasonText, signalsFor, sprintRows, statusFor, ticketFrom, toLine, tokens, usd,
+  addPrompt, ago, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, parseConfig, parseLines,
+  prune, reasonText, signalsFor, sprintIssue, sprintRows, statusFor, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
-import type { Line, ProjectConfig, StorageStatus } from './lib'
+import type { JiraIssue, Line, ProjectConfig, SprintIssue, StorageStatus } from './lib'
 
 const PANE = 'pigment'
 const TITLES: Record<Role, string> = { developer: 'Your work', manager: 'The sprint' }
@@ -155,7 +155,7 @@ async function getJson($: EngineInterface, url: string, headers: Record<string, 
   return JSON.parse(r.text) as unknown
 }
 
-type JiraSprint = { name: string; issues: { key: string; summary?: string }[] }
+type JiraSprint = { name: string; issues: SprintIssue[] }
 
 /** The open sprint's tickets from Jira, or null when there is none or Jira is not set up. */
 async function jiraSprint($: EngineInterface, c: Ctx): Promise<JiraSprint | null> {
@@ -168,8 +168,9 @@ async function jiraSprint($: EngineInterface, c: Ctx): Promise<JiraSprint | null
     const sprints = (await getJson($, `${site}/rest/agile/1.0/board/${b.id}/sprint?state=active`, auth).catch(() => ({}))) as { values?: { id: number; name: string }[] }
     const s = sprints.values?.[0]
     if (!s) continue
-    const page = (await getJson($, `${site}/rest/agile/1.0/sprint/${s.id}/issue?fields=summary&maxResults=200`, auth)) as { issues?: { key: string; fields?: { summary?: string } }[] }
-    return { name: s.name, issues: (page.issues ?? []).map(i => ({ key: i.key, summary: i.fields?.summary })) }
+    const fields = 'summary,status,resolutiondate,timeoriginalestimate'
+    const page = (await getJson($, `${site}/rest/agile/1.0/sprint/${s.id}/issue?fields=${fields}&expand=changelog&maxResults=200`, auth)) as { issues?: JiraIssue[] }
+    return { name: s.name, issues: (page.issues ?? []).map(sprintIssue) }
   }
   return null
 }
@@ -413,7 +414,13 @@ export const register: Register = (on, options) => {
       if (!s) return <Text dimColor>Gathering the sprint…</Text>
       const now = await $.clock.now()
       const heading = s.name ? `${s.name} so far` : 'The last two weeks'
-      const room = Math.max(3, rows - 14 - s.live.length)
+      const doing = inDevelopment(s.tasks, now, s.source === 'jira')
+      const look = lookText(s.tasks, now)
+      const room = Math.max(3, rows - 18 - s.live.length - doing.length)
+      const mark = (t: TaskCost) => {
+        const l = timeFor(t, now)?.look
+        return l === 'over' ? '!! ' : l === 'near' ? '!  ' : '   '
+      }
       return (
         <Box flexDirection="column" gap={1}>
           {storageCard}
@@ -424,14 +431,34 @@ export const register: Register = (on, options) => {
             {s.note && <Text dimColor>{s.note}</Text>}
           </Box>
 
+          {look && (
+            <Box flexDirection="column" borderStyle="round" paddingX={1}>
+              <Text bold>Worth a look</Text>
+              <Text>{look}</Text>
+            </Box>
+          )}
+
+          <Box flexDirection="column">
+            <Text dimColor>{s.source === 'jira' ? 'In development' : 'Worked on lately'}</Text>
+            {doing.length === 0 && <Text dimColor>Nothing in development right now.</Text>}
+            {doing.map(t => (
+              <Text bold={!!timeFor(t, now)?.look}>
+                {mark(t)}{fit(`${t.ticket} · ${timeText(t, now) || 'not started'}${t.summary ? ` · ${t.summary}` : ''}`, width - 4)}
+              </Text>
+            ))}
+          </Box>
+
           <Box flexDirection="column">
             <Text dimColor>By task</Text>
             {s.tasks.length === 0 && <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text>}
-            {s.tasks.slice(0, room).map(t => (
-              <Text>
-                {usd(t.usd).padStart(8)}  {fit(t.summary ? `${t.ticket} · ${t.summary}` : t.ticket, width - 11)}
-              </Text>
-            ))}
+            {s.tasks.slice(0, room).map(t => {
+              const time = timeText(t, now)
+              return (
+                <Text>
+                  {usd(t.usd).padStart(8)}  {fit([t.ticket, time, t.summary].filter(Boolean).join(' · '), width - 11)}
+                </Text>
+              )
+            })}
           </Box>
 
           <Box flexDirection="column">
@@ -444,6 +471,7 @@ export const register: Register = (on, options) => {
               </Text>
             ))}
           </Box>
+          <Text dimColor>Time runs from when a task started until it's done, nights and weekends included.</Text>
           {estimate}
         </Box>
       )

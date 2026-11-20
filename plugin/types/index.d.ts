@@ -41,7 +41,19 @@ export type Work = {
 }
 
 /** One task's total. */
-export type TaskCost = { ticket: string; summary?: string; usd: number; prompts: number; lastAt: number }
+export type TaskCost = {
+  ticket: string; summary?: string; usd: number; prompts: number; lastAt: number
+  /** First prompt Pigment counted on this ticket. */
+  firstAt?: number
+  /** When the task started (Jira: left its first status), else firstAt. */
+  startedAt?: number
+  /** When it finished (Jira: resolved); absent while open. */
+  doneAt?: number
+  /** The time it was given (Jira: original estimate), in milliseconds. */
+  estimateMs?: number
+  /** Jira's status category: to do, in development, done. */
+  stage?: 'todo' | 'doing' | 'done'
+}
 
 /** One session that has been active recently. */
 export type LiveSession = { session: string; person: string; ticket: string; usd: number; lastAt: number }

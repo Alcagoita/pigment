@@ -4,7 +4,7 @@
 // Every request needs `Authorization: Bearer <TEAM_KEY>` (a Worker secret).
 //   POST /v1/prompt     {session, person, ticket, usd, input, output, cacheRead, cacheWrite, at}
 //   POST /v1/heartbeat  {session, person, ticket, usd, lastAt}
-//   GET  /v1/tasks      -> [{ticket, usd, prompts, lastAt}]   (all tasks; the mod picks the sprint's)
+//   GET  /v1/tasks      -> [{ticket, usd, prompts, firstAt, lastAt}]   (all tasks; the mod picks the sprint's)
 //   GET  /v1/live       -> [{session, person, ticket, usd, lastAt}] active in the last 10 minutes
 
 const LIVE_MS = 10 * 60_000
@@ -54,7 +54,7 @@ export async function handle(request, env, now = Date.now()) {
 
   if (request.method === 'GET' && url.pathname === '/v1/tasks') {
     const { results } = await env.DB.prepare(
-      'SELECT ticket, SUM(usd) AS usd, COUNT(*) AS prompts, MAX(at) AS lastAt FROM prompts GROUP BY ticket'
+      'SELECT ticket, SUM(usd) AS usd, COUNT(*) AS prompts, MIN(at) AS firstAt, MAX(at) AS lastAt FROM prompts GROUP BY ticket'
     ).all()
     return json(results)
   }
