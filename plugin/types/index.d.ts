@@ -60,6 +60,6 @@ export type Ledger = {
 
 declare module 'claude-code' {
   interface PluginState {
-    tally: { work: Shaped<Work>; sprint: Shaped<Sprint | null> }
+    pigment: { work: Shaped<Work>; sprint: Shaped<Sprint | null> }
   }
 }

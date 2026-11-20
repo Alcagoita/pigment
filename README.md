@@ -1,8 +1,10 @@
-# Tally
+# Pigment
+
+*How much paint went into each stroke.*
 
 What your AI work costs, beside the chat: each prompt, each task, each session — and for whoever runs the sprint, the sprint by task and who is working now. A Claude Code mod.
 
-When a conversation gets long or each prompt starts costing much more than at the start, Tally suggests a fresh start: **Optimize now** writes a short handoff, copies it, and puts a message in the prompt box to continue in a new session. It never replaces compacting; it's a calmer, separate option.
+When a conversation gets long or each prompt starts costing much more than at the start, Pigment suggests a fresh start: **Optimize now** writes a short handoff, copies it, and puts a message in the prompt box to continue in a new session. It never replaces compacting; it's a calmer, separate option.
 
 Costs are local estimates at list price, as `/cost` shows them. On a subscription they are what the work would cost, not what you pay.
 
@@ -11,10 +13,10 @@ Costs are local estimates at list price, as `/cost` shows them. On a subscriptio
 In Claude Code:
 
 ```
-/plugin install tally --marketplace Alcagoita/tally
+/plugin install pigment --marketplace Alcagoita/pigment
 ```
 
-Answer `y` to add the marketplace, then pick a scope. The pane opens on the side; `/tally` reopens it.
+Answer `y` to add the marketplace, then pick a scope. The pane opens on the side; `/pigment` reopens it.
 
 ## Two views
 
@@ -47,22 +49,22 @@ Keys and tokens are stored in Claude Code's secure storage, never in a file of t
 
 ## Alone, or as a team
 
-**Alone:** nothing to set up. Tally keeps a ledger on this computer, across sessions, per project folder. The sprint view shows your own sessions.
+**Alone:** nothing to set up. Pigment keeps a ledger on this computer, across sessions, per project folder. The sprint view shows your own sessions.
 
-**As a team:** deploy the small server in `server/` once (a Cloudflare Worker with a D1 database, free tier), give everyone its URL and the team key, and every developer's Tally sends **numbers only** to it: the ticket, the session, the person's display name, the cost and token counts. Never prompts, answers or code. The manager's view reads from it, every 15 seconds.
+**As a team:** deploy the small server in `server/` once (a Cloudflare Worker with a D1 database, free tier), give everyone its URL and the team key, and every developer's Pigment sends **numbers only** to it: the ticket, the session, the person's display name, the cost and token counts. Never prompts, answers or code. The manager's view reads from it, every 15 seconds.
 
 ```bash
 cd server
 npx wrangler login
-npx wrangler d1 create tally            # copy the database_id into wrangler.toml
-npx wrangler d1 execute tally --remote --file schema.sql
+npx wrangler d1 create pigment            # copy the database_id into wrangler.toml
+npx wrangler d1 execute pigment --remote --file schema.sql
 npx wrangler secret put TEAM_KEY        # a long random key; share it with the team privately
 npx wrangler deploy
 ```
 
 ## Read it kindly
 
-Tally leads with tasks and the sprint, not with people. It's there to see how the team uses AI and where a task got expensive, not to rank anyone.
+Pigment leads with tasks and the sprint, not with people. It's there to see how the team uses AI and where a task got expensive, not to rank anyone.
 
 ## Develop
 

@@ -1,11 +1,11 @@
 {
   "$schema": "https://code.claude.com/schemas/marketplace.json",
-  "name": "tally",
-  "description": "Tally: what your AI work costs, by prompt, task, session and sprint.",
-  "owner": { "name": "Olegário Nascimento", "url": "https://github.com/Alcagoita/tally" },
+  "name": "pigment",
+  "description": "Pigment: what your AI work costs, by prompt, task, session and sprint.",
+  "owner": { "name": "Olegário Nascimento", "url": "https://github.com/Alcagoita/pigment" },
   "plugins": [
     {
-      "name": "tally",
+      "name": "pigment",
       "source": "./plugin",
       "description": "What your prompts, tasks and sessions cost, beside the chat — and the sprint by task for a manager."
     }

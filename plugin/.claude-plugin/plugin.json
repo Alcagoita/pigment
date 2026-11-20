@@ -1,5 +1,5 @@
 {
-  "name": "tally",
+  "name": "pigment",
   "version": "0.1.0",
   "description": "What your prompts, tasks and sessions cost, beside the chat — and for a manager, the sprint by task and who is working now. A calm nudge to start fresh when a conversation gets long.",
   "author": {
@@ -33,7 +33,7 @@
     "serverUrl": {
       "type": "string",
       "title": "Team server",
-      "description": "The team's Tally server URL. Empty keeps everything on this computer.",
+      "description": "The team's Pigment server URL. Empty keeps everything on this computer.",
       "default": ""
     },
     "teamKey": {

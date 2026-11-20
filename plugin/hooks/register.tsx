@@ -7,7 +7,7 @@ import {
   signalsFor, sprintRows, ticketFrom, tokens, usd,
 } from './lib'
 
-const PANE = 'tally'
+const PANE = 'pigment'
 const TITLES: Record<Role, string> = { developer: 'Your work', manager: 'The sprint' }
 const REFRESH_MS = 15_000
 const HEARTBEAT_MS = 15_000
@@ -17,8 +17,8 @@ const EMPTY: Work = {
   hasUnknownPrice: false, prompts: [], snoozed: [], isBusy: false,
 }
 // Bump a tag when its type's fields change: older stored values are read as the initial value.
-const work = atom({ plugin: 'tally', key: 'work' } as const, EMPTY, { shape: 'work-1' })
-const sprint = atom({ plugin: 'tally', key: 'sprint' } as const, null, { shape: 'sprint-1' })
+const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-1' })
+const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-1' })
 
 type Options = {
   role?: string; projectFolder?: string; person?: string; serverUrl?: string; teamKey?: string
@@ -101,7 +101,7 @@ async function refreshSprint($: EngineInterface, c: Ctx) {
       costs = (await getJson($, `${c.server}/v1/tasks`, h)) as TaskCost[]
       live = (await getJson($, `${c.server}/v1/live`, h)) as LiveSession[]
     } catch {
-      note = "I couldn't reach the team's tally just now. I'll try again in a moment."
+      note = "I couldn't reach the team server just now. I'll try again in a moment."
       const l = await loadLedger($, c)
       costs = Object.values(l.tasks)
       live = Object.values(l.sessions)
@@ -163,7 +163,7 @@ export const register: Register = (on, options) => {
     const l = isMeasured ? await loadLedger($, c) : emptyLedger()
     await update($, work, () => ({ ...EMPTY, isMeasured, folder: c.folder, role, ticket, taskUsd: l.tasks[ticket]?.usd ?? 0 }))
 
-    await $.command.register({ name: 'tally', description: 'Show what your work, your task and the sprint cost' })
+    await $.command.register({ name: 'pigment', description: 'Show what your work, your task and the sprint cost' })
     if (isMeasured || role === 'manager') void $.ui.open({ id: PANE, title: TITLES[role] })
     if (role === 'manager') {
       void refreshSprint($, c)
@@ -172,7 +172,7 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  on('command.run', { command: 'tally' }, async $ => {
+  on('command.run', { command: 'pigment' }, async $ => {
     await $.ui.open({ id: PANE, title: TITLES[role] })
     if (role === 'manager') void refreshSprint($, c)
     return { text: role === 'manager' ? 'The sprint view is open.' : 'Your work view is open.' }

@@ -24,7 +24,7 @@ const D1 = {
 }
 const env = { DB: D1, TEAM_KEY: 'k3y' }
 const req = (method, path, body, key = 'k3y') =>
-  new Request('https://tally.test' + path, { method, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  new Request('https://pigment.test' + path, { method, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
 
 const T0 = 1_000_000_000_000
 assert.equal((await handle(req('GET', '/v1/tasks', null, 'wrong'), env, T0)).status, 401)

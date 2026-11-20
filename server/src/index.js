@@ -1,4 +1,4 @@
-// Tally team server: one per project (or team). Keeps numbers only — ticket, session,
+// Pigment team server: one per project (or team). Keeps numbers only — ticket, session,
 // person's display name, cost and token counts. Never prompts, answers or code.
 //
 // Every request needs `Authorization: Bearer <TEAM_KEY>` (a Worker secret).

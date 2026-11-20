@@ -4,9 +4,9 @@ import { addPrompt, emptyLedger, isInside, liveFrom, NO_TICKET, signalsFor, spri
 import type { PromptCost } from '../types'
 
 const pane = (title: string) => ({
-  plugin: 'tally',
+  plugin: 'pigment',
   component: 'Pane',
-  requestId: 'tally',
+  requestId: 'pigment',
   props: { title, isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
 }) as const
 
@@ -39,7 +39,7 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
 
 function engine(on: Parameters<Parameters<typeof test>[1]>[1], branch: string, cost: { usd: number; percent: number }) {
   const store = new Map<string, unknown>()
-  on('command.register', () => ({ value: { command: 'tally' } }))
+  on('command.register', () => ({ value: { command: 'pigment' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: '/work/app' }))
