@@ -1,0 +1,15 @@
+name = "tally"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# No request logs: the server keeps only what the tables above hold.
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tally"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+
+# TEAM_KEY is a secret: npx wrangler secret put TEAM_KEY
