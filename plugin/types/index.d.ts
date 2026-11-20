@@ -95,6 +95,6 @@ export type Ledger = {
 
 declare module 'claude-code' {
   interface PluginState {
-    pigment: { work: Shaped<Work>; sprint: Shaped<Sprint | null> }
+    pigment: { work: Shaped<Work>; sprint: Shaped<Sprint | null>; open: Shaped<Record<string, boolean>> }
   }
 }

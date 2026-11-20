@@ -86,7 +86,7 @@ test('Your work: this prompt, this task and this session', async ($, on) => {
   await $.turn.complete(finish)
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...pane('Your work'), surface })
+    const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface })
     expect(await ui.find({ type: 'Text', text: /^This task · KAN-55$/ })).toBeTruthy()
     expect((await ui.find({ type: 'Text', text: /^\$0\.12$/ }))?.text).toBe('$0.12')
     expect((await ui.find({ type: 'Text', text: /^\$0\.62$/ }))?.text).toBe('$0.62')
@@ -104,11 +104,11 @@ test('The sprint: by task and working now, on this computer', { options: { role:
   await $.turn.complete(finish)
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...pane('The sprint'), surface })
+    const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface })
     expect(await ui.find({ type: 'Text', text: /The last two weeks/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /\$3\.00 +KAN-88/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^\$3\.00 · KAN-88$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /1 session working now/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /me · KAN-88/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^You · just now$/ })).toBeTruthy()
     await ui.unmount()
   }
 })
@@ -123,7 +123,7 @@ test('first run asks where to keep the numbers; "Just on this computer" writes t
   cost.usd = 0.3
   await $.turn.complete(finish)
 
-  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'desktop' })
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /Where should I keep the numbers/ })).toBeTruthy()
   await ui.press({ key: 'storage-local' })
   expect(JSON.parse(files.get('/work/app/.pigment/config.json') ?? '{}').storage).toBe('local')
@@ -148,7 +148,7 @@ test('a developer joining a cloud project sees Developer setup and counts meanwh
   cost.usd = 0.2
   await $.turn.complete(finish)
 
-  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'terminal' })
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /pigment\.team\.example/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /1 waiting/ })).toBeTruthy()
@@ -170,7 +170,7 @@ test('with the team key, prompts go to the team server, waiting ones first', { o
   const body = JSON.parse(prompts[0]!.slice(prompts[0]!.indexOf(' ') + 1))
   expect(body.person).toBe('Ana')
   expect(body.ticket).toBe('KAN-90')
-  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'desktop' })
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /Developer setup|Where should I keep/ })).toBeFalsy()
   await ui.unmount()
 })
@@ -254,12 +254,13 @@ test('The sprint with Jira: In development with time, and Worth a look', {
   await $.command.run({ command: 'pigment', args: '' } as never)
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...pane('The sprint'), surface })
+    const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface })
     expect(await ui.find({ type: 'Text', text: /^Sprint 22 so far$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^KAN-045 has used 5h of its 6h\.$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^In development$/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /!  KAN-045 · 5h of 6h · Invite link/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /KAN-96 · 2h · Share sheet/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^!  KAN-045 · 5h of 6h$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^   Invite link$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^   KAN-96 · 2h$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /KAN-10 · not started/ })).toBeFalsy()
     expect(await ui.find({ type: 'Text', text: /^Your session on KAN-045 has been quiet for 1h 20m\.$/ })).toBeTruthy()
     await ui.unmount()
@@ -301,7 +302,7 @@ test('a task in Testing: offer to log the worked time, then log it in Jira', {
   store.set('ledger:/work/app', { tasks: { 'KAN-55': { ticket: 'KAN-55', usd: 4, prompts: 10, lastAt: 0, activeMs: 5 * 3_600_000 + 10 * 60_000 } }, sessions: {} })
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
 
-  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'desktop' })
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /^KAN-55 is in Testing$/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /^Log the 5h 10m you worked on it in Jira\?$/ })).toBeTruthy()
   await ui.press({ key: 'log-it' })
@@ -335,8 +336,36 @@ test('when the open sprint changes, the ended one gets its summary file', {
   expect(md).toMatch(/^# Sprint 21\n/)
   expect(md).toMatch(/\$10\.00/)
   expect(store.get('summarized:/work/app:21')).toBe(true)
-  const ui = await $.ui.mount({ ...pane('The sprint'), surface: 'terminal' })
+  const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /^Sprint 21 has ended$/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /^\$10\.00 · 30 prompts · 5h worked$/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+
+test('long lists show three rows, then Show more', { options: { role: 'manager' } }, async ($, on) => {
+  const store = engine(on, 'develop', { usd: 0, percent: 10 })
+  store.set('migrated:/work/app', true)
+  const tasks = Object.fromEntries([1, 2, 3, 4, 5].map(n => [`KAN-${n}`, { ticket: `KAN-${n}`, usd: n, prompts: 1, lastAt: 1_000_000, activeMs: 60_000 * n }]))
+  store.set('ledger:/work/app', { tasks, sessions: {} })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+  const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^\$1\.00 · KAN-1/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^\$5\.00 · KAN-5/ })).toBeFalsy()
+  expect(await ui.find({ type: 'Button', key: 'fold-tasks' })).toBeTruthy()
+  await ui.press({ key: 'fold-tasks' })
+  expect(await ui.find({ type: 'Text', text: /^\$5\.00 · KAN-5/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a manager without the key sees Connect to the team server, not Developer setup', { options: { role: 'manager' } }, async ($, on) => {
+  const files = new Map([['/work/app/.pigment/config.json', JSON.stringify({ version: 1, storage: 'cloud', serverUrl: 'https://pigment.team.example' })]])
+  engine(on, 'develop', { usd: 0, percent: 10 }, files)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+  const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^Connect to the team server$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeFalsy()
   await ui.unmount()
 })

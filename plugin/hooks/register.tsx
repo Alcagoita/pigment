@@ -9,7 +9,7 @@ import {
 import type { JiraIssue, Line, ProjectConfig, SprintIssue, StorageStatus } from './lib'
 
 const PANE = 'pigment'
-const TITLES: Record<Role, string> = { developer: 'Your work', manager: 'The sprint' }
+const TITLES: Record<Role, string> = { developer: 'Pigment · Your work', manager: 'Pigment · The sprint' }
 const REFRESH_MS = 15_000
 const HEARTBEAT_MS = 15_000
 
@@ -21,6 +21,9 @@ const EMPTY: Work = {
 // Bump a tag when its type's fields change: older stored values are read as the initial value.
 const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-4' })
 const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-3' })
+// Which lists the person expanded past their first three rows.
+const open = atom({ plugin: 'pigment', key: 'open' } as const, {}, { shape: 'open-1' })
+const FIRST = 3
 
 type Options = {
   role?: string; projectFolder?: string; person?: string; serverUrl?: string; teamKey?: string
@@ -45,6 +48,8 @@ type Ctx = {
   jiraSite: string; jiraProject: string
   lastStatusCheck: number
   refreshing?: Promise<void>
+  /** The pane's title as last set, so it's set again only when the sprint changes. */
+  title: string
 }
 
 function jiraBase(c: Ctx) { return `https://${c.jiraSite.replace(/^https?:\/\//, '').replace(/\/+$/, '')}` }
@@ -300,6 +305,13 @@ async function doRefresh($: EngineInterface, c: Ctx) {
   }
   await update($, sprint, x => ({ ...next, summary: x?.summary }))
 
+  // "Pigment · Sprint 22" while a sprint is open; "Pigment · The sprint" otherwise.
+  const title = js?.name ? `Pigment · ${js.name}` : TITLES.manager
+  if (title !== c.title) {
+    c.title = title
+    void $.ui.open({ id: PANE, title })
+  }
+
   // A sprint that was open last time and isn't now has ended: write its summary once.
   if (c.hasJira && !note) {
     const seenKey = `sprintSeen:${c.root}`
@@ -347,6 +359,7 @@ export const register: Register = (on, options) => {
     jiraSite: '',
     jiraProject: '',
     lastStatusCheck: 0,
+    title: '',
   }
   const role = c.role
 
@@ -479,10 +492,22 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Progress } = $.ui.resolve(e)
-    const width = e.props.bodyColumns ?? 40
     const rows = e.viewport?.rows ?? 30
-    const fit = (s: string, n: number) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s)
     const estimate = <Text dimColor>An estimate at list price. On a plan, it's what it would cost, not what you pay.</Text>
+    const expanded = await read($, open)
+    /** Rows one per item; past the first three, a toggle shows the rest. */
+    const fold = (key: string, rows: JSX.Element[]) => {
+      const isOpen = expanded[key] === true
+      return (
+        <Box flexDirection="column" gap={1}>
+          {isOpen ? rows : rows.slice(0, FIRST)}
+          {rows.length > FIRST && (
+            <Button key={`fold-${key}`} plain label={isOpen ? 'Show fewer ▴' : `Show ${rows.length - FIRST} more ▾`}
+              onPress={() => update($, open, x => ({ ...x, [key]: !isOpen }))} />
+          )}
+        </Box>
+      )
+    }
 
     const w0 = await read($, work)
     const host = (w0.serverUrl ?? '').replace(/^https?:\/\//, '')
@@ -509,6 +534,17 @@ export const register: Register = (on, options) => {
           </Box>
         </Box>
       )
+    } else if (w0.isMeasured && w0.storageCard !== 'hidden' && w0.storage === 'cloud-needs-key' && role === 'manager') {
+      storageCard = (
+        <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
+          <Text bold>Connect to the team server</Text>
+          <Text dimColor>The sprint view reads everyone's numbers from {host || 'the team server'}, so it needs the team key too.</Text>
+          <Text dimColor>1. Add the team key in /config, under Pigment. If you set the server up, it's saved on this computer under ~/.pigment/keys/.</Text>
+          <Text dimColor>2. Share the same key with each developer, privately.</Text>
+          <Text dimColor>Until then I show this computer's numbers{w0.waiting > 0 ? `, and ${w0.waiting} of yours are waiting to be sent` : ''}.</Text>
+          <Box gap={1}><Button key="storage-later" label="Not now" onPress={() => setCard('hidden')} /></Box>
+        </Box>
+      )
     } else if (w0.isMeasured && w0.storageCard !== 'hidden' && w0.storage === 'cloud-needs-key') {
       storageCard = (
         <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
@@ -531,7 +567,6 @@ export const register: Register = (on, options) => {
       const doing = inDevelopment(s.tasks, now, s.source === 'jira')
       const look = lookText(s.tasks, now)
       const quiet = (s.quiet ?? []).map(q => `${q.person === 'me' ? 'Your' : `${q.person}'s`} session on ${q.ticket} has been quiet for ${duration(now - q.lastAt)}.`)
-      const room = Math.max(3, rows - 18 - s.live.length - doing.length)
       const mark = (t: TaskCost) => {
         const l = timeFor(t, now)?.look
         return l === 'over' ? '!! ' : l === 'near' ? '!  ' : '   '
@@ -565,8 +600,7 @@ export const register: Register = (on, options) => {
             <Box flexDirection="column" borderStyle="round" paddingX={1}>
               <Text bold>Worth a look</Text>
               {look && <Text>{look}</Text>}
-              {quiet.slice(0, 4).map(q => <Text>{q}</Text>)}
-              {quiet.length > 4 && <Text dimColor>{quiet.length - 4} more quiet sessions.</Text>}
+              {quiet.length > 0 && fold('quiet', quiet.map(q => <Text>{q}</Text>))}
               {quiet.length > 0 && <Text dimColor>A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text>}
             </Box>
           )}
@@ -574,35 +608,38 @@ export const register: Register = (on, options) => {
           <Box flexDirection="column">
             <Text dimColor>{s.source === 'jira' ? 'In development' : 'Worked on lately'}</Text>
             {doing.length === 0 && <Text dimColor>Nothing in development right now.</Text>}
-            {doing.map(t => (
-              <Text bold={!!timeFor(t, now)?.look}>
-                {mark(t)}{fit(`${t.ticket} · ${timeText(t, now) || 'not started'}${t.summary ? ` · ${t.summary}` : ''}`, width - 4)}
-              </Text>
-            ))}
+            {doing.length > 0 && fold('doing', doing.map(t => (
+              <Box flexDirection="column">
+                <Text bold={!!timeFor(t, now)?.look}>{mark(t)}{t.ticket} · {timeText(t, now) || 'not started'}</Text>
+                {t.summary && <Text dimColor>   {t.summary}</Text>}
+              </Box>
+            )))}
           </Box>
 
           <Box flexDirection="column">
             <Text dimColor>By task</Text>
             {s.tasks.length === 0 && <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text>}
-            {s.tasks.slice(0, room).map(t => {
+            {s.tasks.length > 0 && fold('tasks', s.tasks.map(t => {
               const time = timeText(t, now)
               return (
-                <Text>
-                  {usd(t.usd).padStart(8)}  {fit([t.ticket, time, t.summary].filter(Boolean).join(' · '), width - 11)}
-                </Text>
+                <Box flexDirection="column">
+                  <Text>{usd(t.usd)} · {t.ticket}{time ? ` · ${time}` : ''}</Text>
+                  {t.summary && <Text dimColor>{t.summary}</Text>}
+                </Box>
               )
-            })}
+            }))}
           </Box>
 
           <Box flexDirection="column">
             <Text dimColor>
               {s.live.length === 0 ? 'Nobody working right now' : `${s.live.length} ${s.live.length === 1 ? 'session' : 'sessions'} working now`}
             </Text>
-            {s.live.map(l => (
-              <Text>
-                {usd(l.usd).padStart(8)}  {fit(`${l.person} · ${l.ticket} · ${ago(now - l.lastAt)}`, width - 11)}
-              </Text>
-            ))}
+            {s.live.length > 0 && fold('live', s.live.map(l => (
+              <Box flexDirection="column">
+                <Text>{usd(l.usd)} · {l.ticket}</Text>
+                <Text dimColor>{l.person === 'me' ? 'You' : l.person} · {ago(now - l.lastAt)}</Text>
+              </Box>
+            )))}
           </Box>
           {s.tasks.length > 0 && (
             <Box>
@@ -626,7 +663,7 @@ export const register: Register = (on, options) => {
     const signals = signalsFor(w)
     const showCard = signals.length > 0 && signals.some(x => !w.snoozed.includes(x))
     const last = w.prompts[w.prompts.length - 1]
-    const recent = [...w.prompts].reverse().slice(0, Math.max(3, rows - (showCard ? 22 : 16)))
+    const recent = [...w.prompts].reverse().slice(0, 50)
 
     const optimize = async () => {
       await update($, work, x => ({ ...x, isBusy: true }))
@@ -697,7 +734,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           <Text dimColor>Earlier prompts</Text>
           {recent.length === 0 && <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text>}
-          {recent.map(p => <Text>{usd(p.usd).padStart(8)}  {fit(p.label, width - 11)}</Text>)}
+          {recent.length > 0 && fold('prompts', recent.map(p => <Text>{usd(p.usd)} · {p.label}</Text>))}
         </Box>
         {estimate}
       </Box>
