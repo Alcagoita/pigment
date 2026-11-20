@@ -590,6 +590,14 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
     ) : null
+    // Always there, quietly: a fresh start whenever the person wants one, not only when I suggest it.
+    const freshLink = w0.isMeasured && !showCard && w0.prompts.length > 0 ? (
+      <Box flexDirection="column">
+        <Button key="optimize-anyway" plain label={w0.isBusy ? 'Writing a summary…' : 'Start fresh with a summary'}
+          onPress={w0.isBusy ? () => undefined : optimize} />
+        <Text dimColor>I write where we are, copy it, and get a new session ready. Nothing is lost.</Text>
+      </Box>
+    ) : null
 
     // ── Manager: The sprint ──────────────────────────────────────────
     if (role === 'manager') {
@@ -684,6 +692,7 @@ export const register: Register = (on, options) => {
               }} />
             </Box>
           )}
+          {freshLink}
           <Text dimColor>Time is what was worked in sessions: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.</Text>
           {estimate}
         </Box>
@@ -739,6 +748,7 @@ export const register: Register = (on, options) => {
           {recent.length === 0 && <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text>}
           {recent.length > 0 && fold('prompts', recent.map(p => <Text>{usd(p.usd)} · {p.label}</Text>))}
         </Box>
+        {freshLink}
         {estimate}
       </Box>
     )

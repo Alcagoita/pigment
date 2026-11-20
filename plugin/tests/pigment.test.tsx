@@ -386,3 +386,20 @@ test('the manager view also offers a fresh start when its own conversation grows
   expect(await ui.find({ type: 'Text', text: /^This session: \$0\.90, conversation 72% full$/ })).toBeTruthy()
   await ui.unmount()
 })
+
+test('Start fresh with a summary is always there once there is a prompt, in both views', async ($, on) => {
+  const cost = { usd: 0.1, percent: 20 }
+  const store = engine(on, 'KAN-88-share', cost)
+  store.set('migrated:/work/app', true)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  const ui0 = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  expect(await ui0.find({ type: 'Button', key: 'optimize-anyway' })).toBeFalsy()
+  await ui0.unmount()
+  await $.prompt.submit({ text: 'Hi' } as never)
+  cost.usd = 0.2
+  await $.turn.complete(finish)
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'terminal' })
+  expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', key: 'optimize' })).toBeFalsy()
+  await ui.unmount()
+})

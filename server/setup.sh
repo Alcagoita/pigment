@@ -31,6 +31,7 @@ if [ "$DRY" = "1" ]; then
   say "plan: create a random team key, set it as the Worker secret TEAM_KEY, save it to $KEYFILE (only you can read it)"
   say "plan: deploy the Worker $NAME (workers.dev)"
   say "plan: write $PROJECT/.pigment/config.json with storage \"cloud\" and the server's address"
+  say "plan: add Pigment to $PROJECT/.claude/settings.json, so everyone who opens the project is offered it"
   exit 0
 fi
 
@@ -86,8 +87,16 @@ c.version=1;c.storage='cloud';c.provider='cloudflare';c.serverUrl=process.argv[2
 fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')" "$PROJECT/.pigment/config.json" "$URL"
 printf '# Pigment: local numbers never go into git\n*.jsonl\n' > "$PROJECT/.pigment/.gitignore"
 
+# The project's shared Claude Code settings: everyone who opens the folder is offered Pigment.
+mkdir -p "$PROJECT/.claude"
+node -e "
+const fs=require('fs');const p=process.argv[1];let c={};try{c=JSON.parse(fs.readFileSync(p,'utf8'))}catch{}
+c.extraKnownMarketplaces=Object.assign({},c.extraKnownMarketplaces,{pigment:{source:{source:'github',repo:'Alcagoita/pigment'}}});
+c.enabledPlugins=Object.assign({},c.enabledPlugins,{'pigment@pigment':true});
+fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')" "$PROJECT/.claude/settings.json"
+
 echo
 say "Done. The team server is live at $URL"
-say "Commit .pigment/config.json so everyone who opens the project finds it."
+say "Commit .pigment/ and .claude/settings.json: everyone who opens the project is then offered Pigment, already pointed at this server."
 say "The team key is saved in $KEYFILE — only you can read it."
 say "Open that file, add the key in /config under Pigment (Team key), and share it with your team privately (not in the repo, not in a public chat)."
