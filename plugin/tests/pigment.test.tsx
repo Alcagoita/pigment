@@ -548,11 +548,14 @@ test('Start fresh: the press returns at once; a continuation is copied to paste,
   await ui.press({ key: 'optimize-anyway' })
   expect(copied).toBe('')            // the press only started it
   await clock.advance(1)
-  expect(forkPrompt).toMatch(/continuation of that one piece of work, not a to-do list/)
-  expect(forkPrompt).toMatch(/Leave out:.*other tasks/s)
+  expect(forkPrompt).toMatch(/resumed in a new one with nothing lost/)
+  expect(forkPrompt).toMatch(/## Also open in this session — every other open topic/)   // nothing dropped
+  expect(forkPrompt).toMatch(/not to be started on their own/)                          // nor started by itself
+  expect(forkPrompt).toMatch(/## Where things are — repositories, branches, pull requests, tickets/)
+  expect(forkPrompt).toMatch(/any key, token or password/)
   expect(files.get('/work/app/.claude/handoffs/2026-11-20-19-28.md')).toBe('## Working on\nKAN-88')
   expect(copied).toBe(resumePrompt('## Working on\nKAN-88'))
-  expect(copied).toMatch(/Carry on with this work from where it stands above\.$/)
+  expect(copied).toMatch(/Carry on with the work in progress above\. The other open topics are there for when I bring them up\.$/)
   expect(filled).toBe('')            // never sent into this session
   // Still there for the next time, with the last one named.
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()

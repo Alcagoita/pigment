@@ -31,21 +31,20 @@ type Options = {
   jiraSite?: string; jiraEmail?: string; jiraToken?: string; jiraProject?: string; logOnStatus?: string
 }
 
-const HANDOFF_PROMPT = `Write a handoff so a fresh session can carry on with the work this session is doing right now, without its long history.
-It is a continuation of that one piece of work, not a to-do list.
-Markdown, under 250 words, only facts from this conversation, no tools:
+const HANDOFF_PROMPT = `Write a handoff so this session can be resumed in a new one with nothing lost. The new session starts with only this note.
+Markdown, up to 700 words, only facts from this conversation, no tools:
 ## Working on — the task in progress right now: its ticket, its goal, what "done" means
 ## Where it stands — what's finished in that task and what's half-done
-## Carry on with — the very next action in that task, then the one after
-## Keep in mind — decisions and rules that apply to it
-## Files — the paths that matter for it
-Leave out: work that is already finished, other tasks, ideas for later, open questions for another day,
-and anything only the person can do themselves (logins, settings, keys, accounts).
+## Carry on with — the very next action in that task
+## Also open in this session — every other open topic, one bullet each: what it is, where it stands, decisions already made, and what it waits on (the person, a review, another task). These are not to be started on their own.
+## Decisions and rules to keep — what the person decided or asked for, so it isn't asked again
+## Where things are — repositories, branches, pull requests, tickets, links and files, with their state
+Leave out: finished topics with nothing left to do, and any key, token or password.
 Answer with the note alone.`
 
 /** What the person pastes as the first message of a new session: the summary, then one line to carry on. */
 export function resumePrompt(summary: string): string {
-  return `${summary.trim()}\n\nCarry on with this work from where it stands above.`
+  return `${summary.trim()}\n\nCarry on with the work in progress above. The other open topics are there for when I bring them up.`
 }
 
 type Ctx = {
