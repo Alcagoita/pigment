@@ -37,6 +37,8 @@ export type Work = {
   /** The task reached the status where time is logged (Testing), with this person's worked time not logged yet. */
   logOffer?: { ticket: string; status: string; ms: number; isBusy?: boolean }
   snoozed: Signal[]
+  /** How full the conversation was when the person said "Not now"; ten points more and I ask again. */
+  snoozedAt?: number
   isBusy: boolean
   handoffPath?: string
   /** Where the numbers go: chosen yet, on this computer, the team cloud, or the cloud waiting for this person's key. */

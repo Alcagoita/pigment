@@ -571,3 +571,27 @@ test('the pane reads the conversation live: a long session shows as long even ri
   expect(await ui.find({ type: 'Button', key: 'optimize' })).toBeTruthy()
   await ui.unmount()
 })
+
+test('pressing Optimize now keeps the card; Not now hides it until the conversation grows', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.UTC(2026, 10, 20, 20) })
+  const cost = { usd: 30, percent: 81 }
+  const store = engine(on, 'KAN-461-osm', cost, new Map(), [], { ownClock: true, turns: 120 })
+  store.set('migrated:/work/app', true)
+  on('model.fork', () => ({ value: { isAnswered: true, text: '## Working on', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }))
+  on('ui.copy', () => ({ value: { isCopied: true } }))
+  on('prompt.fill', () => ({ isFilled: true }) as never)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  await ui.press({ key: 'optimize' })
+  await clock.advance(1)
+  expect(await ui.find({ type: 'Text', text: /grown long/ })).toBeTruthy() // still there after a press
+  await ui.press({ key: 'snooze' })
+  expect(await ui.find({ type: 'Text', text: /grown long/ })).toBeFalsy()  // "Not now"
+  await ui.unmount()
+
+  cost.percent = 92 // the conversation kept growing
+  const again = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  expect(await again.find({ type: 'Text', text: /grown long/ })).toBeTruthy()
+  await again.unmount()
+})

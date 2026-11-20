@@ -130,7 +130,7 @@ async function startFresh($: EngineInterface, c: Ctx, surface: RenderSurface) {
     await $.fs.write(`${c.root}/${rel}`, r.text)
     await $.ui.copy({ text: r.text, surface })
     await $.prompt.fill({ text: continueMessage(rel) })
-    await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel, snoozed: signalsFor(x) }))
+    await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel }))
     $.ui.toast('Summary saved and copied. Send the message in the box and we carry on, fresh.')
   } catch {
     await update($, work, x => ({ ...x, isBusy: false }))
@@ -442,7 +442,7 @@ export const register: Register = (on, options) => {
       ...EMPTY,
       ...(prev.sessionId === c.sessionId ? {
         prompts: prev.prompts, sessionUsd: prev.sessionUsd, hasUnknownPrice: prev.hasUnknownPrice,
-        contextPercent: prev.contextPercent, snoozed: prev.snoozed, handoffPath: prev.handoffPath,
+        contextPercent: prev.contextPercent, snoozed: prev.snoozedAt === undefined ? [] : prev.snoozed, snoozedAt: prev.snoozedAt, handoffPath: prev.handoffPath,
         lastEndAt: prev.lastEndAt, logOffer: prev.logOffer,
       } : {}),
       sessionId: c.sessionId,
@@ -665,7 +665,8 @@ export const register: Register = (on, options) => {
     }
 
     const signals = signalsFor(w0)
-    const showCard = signals.length > 0 && signals.some(x => !w0.snoozed.includes(x))
+    const grewSince = w0.snoozedAt !== undefined && (w0.contextPercent ?? 0) >= w0.snoozedAt + 10
+    const showCard = signals.length > 0 && (grewSince || signals.some(x => !w0.snoozed.includes(x)))
     // The summary takes longer than a press may hold, so the press only starts it.
     const optimize = () => {
       if (w0.isBusy) return
@@ -680,7 +681,7 @@ export const register: Register = (on, options) => {
             <Text dimColor>I can write a short summary and start fresh with you. Nothing is lost.</Text>
             <Box gap={1}>
               <Button key="optimize" variant="primary" label={w0.isBusy ? 'Writing…' : 'Optimize now'} onPress={w0.isBusy ? () => undefined : optimize} />
-              <Button key="snooze" label="Not now" onPress={() => update($, work, x => ({ ...x, snoozed: signalsFor(x) }))} />
+              <Button key="snooze" label="Not now" onPress={() => update($, work, x => ({ ...x, snoozed: signalsFor({ ...x, contextPercent: w0.contextPercent }), snoozedAt: w0.contextPercent ?? 0 }))} />
             </Box>
           </Box>
     ) : null
