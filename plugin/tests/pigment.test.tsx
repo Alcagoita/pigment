@@ -403,7 +403,7 @@ test('Start fresh with a summary is always there once there is a prompt, in both
   store.set('migrated:/work/app', true)
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
   const ui0 = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
-  expect(await ui0.find({ type: 'Button', key: 'optimize-anyway' })).toBeFalsy()
+  expect(await ui0.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy() // there from the start
   await ui0.unmount()
   await $.prompt.submit({ text: 'Hi' } as never)
   cost.usd = 0.2
@@ -551,5 +551,8 @@ test('Start fresh: the press returns at once; the summary is a continuation, and
   expect(files.get('/work/app/.claude/handoffs/2026-11-20-19-28.md')).toBe('## Working on\nKAN-88')
   expect(filled).toBe(continueMessage('.claude/handoffs/2026-11-20-19-28.md'))
   expect(filled).toMatch(/not a new task/)
+  // Still there for the next time, with the last one named.
+  expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Last one: \.claude\/handoffs\/2026-11-20-19-28\.md/ })).toBeTruthy()
   await ui.unmount()
 })

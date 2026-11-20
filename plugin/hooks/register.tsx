@@ -430,6 +430,7 @@ export const register: Register = (on, options) => {
     const l = isMeasured ? await loadLedger($, c) : emptyLedger()
     let waiting = 0
     let hidden = false
+    const startUsage = isMeasured ? await $.session.usage().catch(() => null) : null
     if (isMeasured) {
       await loadConfig($, c)
       await migrate($, c)
@@ -445,6 +446,8 @@ export const register: Register = (on, options) => {
         lastEndAt: prev.lastEndAt, logOffer: prev.logOffer,
       } : {}),
       sessionId: c.sessionId,
+      sessionUsd: prev.sessionId === c.sessionId ? prev.sessionUsd : startUsage?.cost?.usd ?? 0,
+      contextPercent: prev.sessionId === c.sessionId ? prev.contextPercent : startUsage?.context.percent,
       isMeasured, folder: c.folder, role, ticket, taskUsd: l.tasks[ticket]?.usd ?? 0,
       storage: c.status, serverUrl: c.server || undefined, waiting,
       storageCard: (c.status === 'unchosen' || c.status === 'cloud-needs-key') && !hidden ? 'ask' : 'hidden',
@@ -671,11 +674,11 @@ export const register: Register = (on, options) => {
           </Box>
     ) : null
     // Always there, quietly: a fresh start whenever the person wants one, not only when I suggest it.
-    const freshLink = w0.isMeasured && !showCard && (w0.prompts.length > 0 || w0.sessionUsd > 0) ? (
+    const freshLink = w0.isMeasured && !showCard ? (
       <Box flexDirection="column">
         <Button key="optimize-anyway" plain label={w0.isBusy ? 'Writing a summary…' : 'Start fresh with a summary'}
           onPress={w0.isBusy ? () => undefined : optimize} />
-        <Text dimColor>I write where we are, copy it, and get a new session ready. Nothing is lost.</Text>
+        <Text dimColor>I write where we are, copy it, and get a new session ready. Nothing is lost.{w0.handoffPath ? ` Last one: ${w0.handoffPath}` : ''}</Text>
       </Box>
     ) : null
 
@@ -846,7 +849,6 @@ export const register: Register = (on, options) => {
         {w.contextPercent !== undefined && <Progress label="Conversation length" value={w.contextPercent / 100} />}
 
         {freshCard}
-        {w.handoffPath && !showCard && <Text dimColor>Last summary: {w.handoffPath}</Text>}
 
         <Box flexDirection="column">
           <Text dimColor>Earlier prompts</Text>
