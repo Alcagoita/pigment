@@ -1,6 +1,14 @@
-# Pigment
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
+  <img src="assets/hero-light.svg" width="100%" alt="Pigment, a Claude Code mod: how much paint went into each stroke. What your AI work costs, beside the chat. An example of the Your work pane: this prompt, this task, this session, and Optimize now.">
+</picture>
 
-*How much paint went into each stroke.*
+<p>
+  <img src="https://img.shields.io/badge/Claude%20Code-mod-b87524" alt="A Claude Code mod">
+  <img src="https://img.shields.io/badge/licence-CC0-6b675e" alt="CC0">
+  <img src="https://img.shields.io/badge/stores-numbers%20only-e8a86a" alt="Stores numbers only">
+  <a href="https://github.com/Alcagoita/brush-frame"><img src="https://img.shields.io/badge/companion%20to-Brush%20Frame-5ba87a" alt="Companion to Brush Frame"></a>
+</p>
 
 What your AI work costs, beside the chat: each prompt, each task, each session — and for whoever runs the sprint, the sprint by task and who is working now. A Claude Code mod.
 
@@ -19,6 +27,11 @@ In Claude Code:
 Answer `y` to add the marketplace, then pick a scope. The pane opens on the side; `/pigment` reopens it.
 
 ## Two views
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/views-dark.svg">
+  <img src="assets/views-light.svg" width="100%" alt="Pigment's two views with example numbers. Your work, for a developer: this prompt, this task, this session, Optimize now. The sprint, for a manager: the team working now, the sprint so far, a task close to its estimate, and every task in development with its time.">
+</picture>
 
 Pick one in `/config`, under Pigment (**View**).
 
