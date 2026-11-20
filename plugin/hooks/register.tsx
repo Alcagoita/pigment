@@ -3,9 +3,10 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
-  addPrompt, ago, emptyLedger, isInside, liveFrom, NO_TICKET, prune, reasonText,
-  signalsFor, sprintRows, ticketFrom, tokens, usd,
+  addPrompt, ago, emptyLedger, fileFor, fromLines, isInside, liveFrom, NO_TICKET, parseConfig, parseLines,
+  prune, reasonText, signalsFor, sprintRows, statusFor, ticketFrom, toLine, tokens, usd,
 } from './lib'
+import type { Line, ProjectConfig, StorageStatus } from './lib'
 
 const PANE = 'pigment'
 const TITLES: Record<Role, string> = { developer: 'Your work', manager: 'The sprint' }
@@ -15,9 +16,10 @@ const HEARTBEAT_MS = 15_000
 const EMPTY: Work = {
   isMeasured: false, folder: '', role: 'developer', ticket: NO_TICKET, sessionUsd: 0, taskUsd: 0,
   hasUnknownPrice: false, prompts: [], snoozed: [], isBusy: false,
+  storage: 'unchosen', waiting: 0, storageCard: 'ask',
 }
 // Bump a tag when its type's fields change: older stored values are read as the initial value.
-const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-1' })
+const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-2' })
 const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-1' })
 
 type Options = {
@@ -39,6 +41,100 @@ type Ctx = {
   role: Role; folder: string; person: string; server: string; teamKey: string
   hasServer: boolean; hasJira: boolean; o: Options
   root: string; sessionId: string; lastBeat: number
+  config: ProjectConfig | null; status: StorageStatus
+  jiraSite: string; jiraProject: string
+}
+
+const CONFIG = '.pigment/config.json'
+
+/** Reads `.pigment/config.json` (shared with the project) and settles where the numbers go. */
+async function loadConfig($: EngineInterface, c: Ctx) {
+  const path = `${c.root}/${CONFIG}`
+  const text = (await $.fs.exists(path)) ? await $.fs.read(path) : null
+  c.config = parseConfig(text)
+  const settingsServer = (c.o.serverUrl ?? '').trim().replace(/\/+$/, '')
+  c.server = c.config?.serverUrl || settingsServer
+  c.status = statusFor(c.config, { serverUrl: settingsServer, teamKey: c.teamKey })
+  c.hasServer = c.status === 'cloud'
+  c.jiraSite = c.config?.jira?.site || (c.o.jiraSite ?? '')
+  c.jiraProject = c.config?.jira?.project || (c.o.jiraProject ?? '')
+  c.hasJira = !!(c.jiraSite && c.jiraProject && c.o.jiraEmail && c.o.jiraToken)
+}
+
+function queueKey(c: Ctx) { return `queue:${c.root}` }
+
+async function loadQueue($: EngineInterface, c: Ctx): Promise<Line[]> {
+  return ((await $.store.get(queueKey(c))) as Line[] | undefined) ?? []
+}
+
+async function send($: EngineInterface, c: Ctx, path: string, body: unknown): Promise<boolean> {
+  if (!c.hasServer) return false
+  try {
+    const r = await $.http.fetch(`${c.server}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${c.teamKey}` },
+      body: JSON.stringify(body),
+    })
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
+/** Adds lines to this person's local file for the month (read, add, write: there is no append). */
+async function appendLocal($: EngineInterface, c: Ctx, lines: Line[]) {
+  const byFile = new Map<string, Line[]>()
+  for (const l of lines) byFile.set(fileFor(c.person, l.at), [...(byFile.get(fileFor(c.person, l.at)) ?? []), l])
+  for (const [rel, ls] of byFile) {
+    const path = `${c.root}/${rel}`
+    const before = (await $.fs.exists(path)) ? await $.fs.read(path) : ''
+    const sep = before === '' || before.endsWith('\n') ? '' : '\n'
+    await $.fs.write(path, before + sep + ls.map(l => JSON.stringify(l)).join('\n') + '\n')
+  }
+}
+
+/** Writes what is waiting to the chosen place; whatever can't go yet keeps waiting. Returns how many still wait. */
+async function flush($: EngineInterface, c: Ctx, extra: Line[] = []): Promise<number> {
+  const waiting = [...(await loadQueue($, c)), ...extra]
+  if (waiting.length === 0) return 0
+  let left: Line[] = waiting
+  if (c.status === 'local') {
+    await appendLocal($, c, waiting)
+    left = []
+  } else if (c.status === 'cloud') {
+    left = []
+    for (let i = 0; i < waiting.length; i++) {
+      const l = waiting[i]!
+      if (!(await send($, c, '/v1/prompt', l))) { left = waiting.slice(i); break }
+    }
+  }
+  await $.store.set(queueKey(c), left)
+  return left.length
+}
+
+/** The first time this version runs in a project, what the hidden ledger held becomes waiting lines. */
+async function migrate($: EngineInterface, c: Ctx) {
+  const flag = `migrated:${c.root}`
+  if (await $.store.get(flag)) return
+  const l = await loadLedger($, c)
+  const now = await $.clock.now()
+  const lines: Line[] = Object.values(l.tasks).filter(t => t.usd > 0).map(t => ({
+    at: t.lastAt || now, session: 'earlier', person: c.person, ticket: t.ticket, usd: t.usd,
+    input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+  }))
+  await $.store.set(queueKey(c), [...(await loadQueue($, c)), ...lines])
+  await $.store.set(flag, true)
+}
+
+/** "Just on this computer": a shared config saying so, and a .gitignore that keeps the numbers out of git. */
+async function chooseLocal($: EngineInterface, c: Ctx) {
+  const config: ProjectConfig = { version: 1, storage: 'local' }
+  await $.fs.write(`${c.root}/${CONFIG}`, JSON.stringify(config, null, 2) + '\n')
+  await $.fs.write(`${c.root}/.pigment/.gitignore`, '# Pigment: the numbers stay on this computer\n*.jsonl\n')
+  await loadConfig($, c)
+  const left = await flush($, c)
+  await update($, work, (x): Work => ({ ...x, storage: c.status, waiting: left, storageCard: 'hidden' }))
+  $.ui.toast('Done. I\'ll keep the numbers in .pigment/ in this project, out of git.')
 }
 
 function ledgerKey(c: Ctx) { return `ledger:${c.root}` }
@@ -52,14 +148,6 @@ async function branchTicket($: EngineInterface, c: Ctx): Promise<string> {
   return r && r.exitCode === 0 ? ticketFrom(r.stdout) : NO_TICKET
 }
 
-function post($: EngineInterface, c: Ctx, path: string, body: unknown) {
-  if (!c.hasServer) return
-  void $.http.fetch(`${c.server}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${c.teamKey}` },
-    body: JSON.stringify(body),
-  }).catch(() => undefined)
-}
 
 async function getJson($: EngineInterface, url: string, headers: Record<string, string>): Promise<unknown> {
   const r = await $.http.fetch(url, { headers: { accept: 'application/json', ...headers } })
@@ -73,9 +161,9 @@ type JiraSprint = { name: string; issues: { key: string; summary?: string }[] }
 async function jiraSprint($: EngineInterface, c: Ctx): Promise<JiraSprint | null> {
   const o = c.o
   if (!c.hasJira) return null
-  const site = `https://${String(o.jiraSite).replace(/^https?:\/\//, '').replace(/\/+$/, '')}`
+  const site = `https://${String(c.jiraSite).replace(/^https?:\/\//, '').replace(/\/+$/, '')}`
   const auth = { authorization: 'Basic ' + btoa(`${o.jiraEmail}:${o.jiraToken}`) }
-  const boards = (await getJson($, `${site}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(String(o.jiraProject))}`, auth)) as { values?: { id: number }[] }
+  const boards = (await getJson($, `${site}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(c.jiraProject)}`, auth)) as { values?: { id: number }[] }
   for (const b of boards.values ?? []) {
     const sprints = (await getJson($, `${site}/rest/agile/1.0/board/${b.id}/sprint?state=active`, auth).catch(() => ({}))) as { values?: { id: number; name: string }[] }
     const s = sprints.values?.[0]
@@ -106,6 +194,14 @@ async function refreshSprint($: EngineInterface, c: Ctx) {
       costs = Object.values(l.tasks)
       live = Object.values(l.sessions)
     }
+  } else if (c.status === 'local') {
+    // Every person's files in this project's .pigment folder, plus this computer's live sessions.
+    const dir = `${c.root}/.pigment`
+    const files = (await $.fs.exists(dir)) ? (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.jsonl')) : []
+    const lines = (await Promise.all(files.map(f => $.fs.read(`${dir}/${f.name}`)))).flatMap(parseLines)
+    const fromFiles = fromLines([...lines, ...(await loadQueue($, c))])
+    costs = fromFiles.tasks
+    live = [...Object.values((await loadLedger($, c)).sessions), ...fromFiles.sessions]
   } else {
     const l = await loadLedger($, c)
     costs = Object.values(l.tasks)
@@ -132,7 +228,7 @@ async function beat($: EngineInterface, c: Ctx, w: Work) {
   const l = await loadLedger($, c)
   const s: LiveSession = { session: c.sessionId, person: c.person, ticket: w.ticket, usd: w.sessionUsd, lastAt: now }
   await $.store.set(ledgerKey(c), prune({ ...l, sessions: { ...l.sessions, [c.sessionId]: s } }, now))
-  post($, c, '/v1/heartbeat', s)
+  void send($, c, '/v1/heartbeat', s)
 }
 
 export const register: Register = (on, options) => {
@@ -147,10 +243,14 @@ export const register: Register = (on, options) => {
     server,
     teamKey,
     hasServer: server !== '' && teamKey !== '',
-    hasJira: !!(o.jiraSite && o.jiraEmail && o.jiraToken && o.jiraProject),
+    hasJira: false,
     root: '',
     sessionId: '',
     lastBeat: 0,
+    config: null,
+    status: 'unchosen',
+    jiraSite: '',
+    jiraProject: '',
   }
   const role = c.role
 
@@ -161,7 +261,17 @@ export const register: Register = (on, options) => {
     const isMeasured = isInside(c.root, c.folder)
     const ticket = isMeasured ? await branchTicket($, c) : NO_TICKET
     const l = isMeasured ? await loadLedger($, c) : emptyLedger()
-    await update($, work, () => ({ ...EMPTY, isMeasured, folder: c.folder, role, ticket, taskUsd: l.tasks[ticket]?.usd ?? 0 }))
+    let waiting = 0
+    if (isMeasured) {
+      await loadConfig($, c)
+      await migrate($, c)
+      waiting = await flush($, c)
+    }
+    await update($, work, (): Work => ({
+      ...EMPTY, isMeasured, folder: c.folder, role, ticket, taskUsd: l.tasks[ticket]?.usd ?? 0,
+      storage: c.status, serverUrl: c.server || undefined, waiting,
+      storageCard: c.status === 'unchosen' || c.status === 'cloud-needs-key' ? 'ask' : 'hidden',
+    }))
 
     await $.command.register({ name: 'pigment', description: 'Show what your work, your task and the sprint cost' })
     if (isMeasured || role === 'manager') void $.ui.open({ id: PANE, title: TITLES[role] })
@@ -216,7 +326,7 @@ export const register: Register = (on, options) => {
     const l = addPrompt(await loadLedger($, c), row, c.sessionId, c.person, total)
     await $.store.set(ledgerKey(c), prune(l, row.at))
     c.lastBeat = row.at
-    post($, c, '/v1/prompt', { ...row, session: c.sessionId, person: c.person })
+    const left = await flush($, c, [toLine(row, c.sessionId, c.person)])
 
     const before = signalsFor(w)
     await update($, work, x => {
@@ -224,6 +334,7 @@ export const register: Register = (on, options) => {
         ...x, sessionUsd: total, taskUsd: l.tasks[row.ticket]?.usd ?? x.taskUsd,
         hasUnknownPrice: now.cost?.hasUnknownPrice === true, contextPercent: now.context.percent,
         prompts: [...x.prompts, row].slice(-200), pendingUsd: undefined, pendingLabel: undefined,
+        waiting: left,
       }
       const isNew = signalsFor(updated).some(s => !before.includes(s))
       return isNew ? { ...updated, snoozed: [] } : updated
@@ -258,6 +369,44 @@ export const register: Register = (on, options) => {
     const fit = (s: string, n: number) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s)
     const estimate = <Text dimColor>An estimate at list price. On a plan, it's what it would cost, not what you pay.</Text>
 
+    const w0 = await read($, work)
+    const host = (w0.serverUrl ?? '').replace(/^https?:\/\//, '')
+    const setCard = (storageCard: Work['storageCard']) => update($, work, x => ({ ...x, storageCard }))
+    let storageCard = null
+    if (w0.isMeasured && w0.storageCard !== 'hidden' && w0.storage === 'unchosen') {
+      storageCard = w0.storageCard === 'cloud-help' ? (
+        <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
+          <Text bold>Keeping the numbers in your cloud</Text>
+          <Text dimColor>1. Set up the team server once: Pigment's README, "Set up the team server". Cloudflare's free plan is enough; it takes about five minutes.</Text>
+          <Text dimColor>2. Add .pigment/config.json to this project with "storage": "cloud" and the server's address, and commit it. Everyone who opens the project then knows where the numbers go.</Text>
+          <Text dimColor>3. Add the team key in /config, under Pigment.</Text>
+          <Text dimColor>Until then I keep counting here. Nothing is lost.</Text>
+          <Box gap={1}><Button key="storage-back" label="Back" onPress={() => setCard('ask')} /></Box>
+        </Box>
+      ) : (
+        <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
+          <Text bold>Where should I keep the numbers?</Text>
+          <Text dimColor>In your cloud, they're safe if this computer goes, and a team sees the sprint together. On this computer, they stay in a file in this project and nothing leaves your machine.</Text>
+          <Box gap={1}>
+            <Button key="storage-local" label="Just on this computer" onPress={() => chooseLocal($, c)} />
+            <Button key="storage-cloud" variant="primary" label="In my cloud" onPress={() => setCard('cloud-help')} />
+            <Button key="storage-later" label="Not now" onPress={() => setCard('hidden')} />
+          </Box>
+        </Box>
+      )
+    } else if (w0.isMeasured && w0.storageCard !== 'hidden' && w0.storage === 'cloud-needs-key') {
+      storageCard = (
+        <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
+          <Text bold>Developer setup</Text>
+          <Text dimColor>This project keeps its numbers in the team's cloud{host ? ` (${host})` : ''}.</Text>
+          <Text dimColor>1. Ask whoever set up the project for the team key.</Text>
+          <Text dimColor>2. Add it in /config, under Pigment: Team key, and Your name.</Text>
+          <Text dimColor>I'm counting here meanwhile{w0.waiting > 0 ? ` (${w0.waiting} waiting)` : ''} and will send it all once the key is in.</Text>
+          <Box gap={1}><Button key="storage-later" label="Not now" onPress={() => setCard('hidden')} /></Box>
+        </Box>
+      )
+    }
+
     // ── Manager: The sprint ──────────────────────────────────────────
     if (role === 'manager') {
       const s = await read($, sprint)
@@ -267,6 +416,7 @@ export const register: Register = (on, options) => {
       const room = Math.max(3, rows - 14 - s.live.length)
       return (
         <Box flexDirection="column" gap={1}>
+          {storageCard}
           <Box flexDirection="column">
             <Text dimColor>{heading}</Text>
             <Text bold>{usd(s.total)}</Text>
@@ -300,7 +450,7 @@ export const register: Register = (on, options) => {
     }
 
     // ── Developer: Your work ─────────────────────────────────────────
-    const w = await read($, work)
+    const w = w0
     if (!w.isMeasured) {
       return <Text dimColor>This session is outside {w.folder}, so I'm not counting it.</Text>
     }
@@ -331,6 +481,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column" gap={1}>
+        {storageCard}
         <Box flexDirection="column">
           <Text dimColor>This prompt</Text>
           <Text bold>{last ? usd(last.usd) : '—'}</Text>
@@ -345,6 +496,7 @@ export const register: Register = (on, options) => {
           <Text dimColor>This session</Text>
           <Text bold>{usd(w.sessionUsd)}</Text>
           <Text dimColor>{w.prompts.length} {w.prompts.length === 1 ? 'prompt' : 'prompts'}{w.hasUnknownPrice ? ', one model priced as another' : ''}</Text>
+          {w.storage === 'cloud' && w.waiting > 0 && <Text dimColor>{w.waiting} waiting to reach the team server. I'll keep trying.</Text>}
         </Box>
 
         {w.contextPercent !== undefined && <Progress label="Conversation length" value={w.contextPercent / 100} />}

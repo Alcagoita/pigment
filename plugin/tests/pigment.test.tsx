@@ -37,8 +37,20 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
   expect(signalsFor({ contextPercent: 70, prompts: [] })).toEqual(['long'])
 })
 
-function engine(on: Parameters<Parameters<typeof test>[1]>[1], branch: string, cost: { usd: number; percent: number }) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TestOn = Parameters<Extract<Parameters<typeof test>[1], (...args: any[]) => any>>[1]
+
+function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = []) {
   const store = new Map<string, unknown>()
+  on('fs.exists', (_, e) => { const p = (e as unknown as { path: string }).path; return { value: files.has(p) || [...files.keys()].some(k => k.startsWith(p + '/')) } })
+  on('fs.read', (_, e) => ({ value: files.get((e as unknown as { path: string }).path) ?? '' }))
+  on('fs.write', (_, e) => { const a = e as unknown as { path: string; text: string }; files.set(a.path, a.text); return { value: undefined } })
+  on('fs.list', (_, e) => {
+    const dir = (e as unknown as { path: string }).path + '/'
+    const names = [...files.keys()].filter(k => k.startsWith(dir) && !k.slice(dir.length).includes('/')).map(k => k.slice(dir.length))
+    return { value: names.map(name => ({ name, kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false })) }
+  })
+  on('http.fetch', (_, e) => { const a = e as unknown as { url: string; init?: { body?: string } }; posts.push(a.url + ' ' + (a.init?.body ?? '')); return { value: { status: 204, ok: true, headers: {}, text: '' } } })
   on('command.register', () => ({ value: { command: 'pigment' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -47,7 +59,7 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], branch: string, c
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 200_000, percent: cost.percent }, cost: { usd: cost.usd } } }))
   on('clock.now', () => ({ value: 1_000_000 }))
   on('clock.every', () => ({ value: undefined }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: branch + '\n', stderr: '' } }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: branch + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('store.get', (_, e) => ({ value: store.get((e as unknown as { key: string }).key) }))
   on('store.set', (_, e) => { const a = e as unknown as { key: string; value: unknown }; store.set(a.key, a.value); return { value: undefined } })
   on('prompt.submit', (_, e) => ({ text: e.text }))
@@ -64,7 +76,7 @@ test('Your work: this prompt, this task and this session', async ($, on) => {
   const cost = { usd: 0.5, percent: 30 }
   engine(on, 'KAN-55-invite-link', cost)
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
-  await $.prompt.submit({ text: 'Add the invite link' })
+  await $.prompt.submit({ text: 'Add the invite link' } as never)
   cost.usd = 0.62
   await $.turn.complete(finish)
 
@@ -82,7 +94,7 @@ test('The sprint: by task and working now, on this computer', { options: { role:
   const cost = { usd: 1, percent: 30 }
   engine(on, 'KAN-88-share', cost)
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
-  await $.prompt.submit({ text: 'Share sheet' })
+  await $.prompt.submit({ text: 'Share sheet' } as never)
   cost.usd = 4
   await $.turn.complete(finish)
 
@@ -94,4 +106,66 @@ test('The sprint: by task and working now, on this computer', { options: { role:
     expect(await ui.find({ type: 'Text', text: /me · KAN-88/ })).toBeTruthy()
     await ui.unmount()
   }
+})
+
+
+test('first run asks where to keep the numbers; "Just on this computer" writes the project files', async ($, on) => {
+  const cost = { usd: 0, percent: 10 }
+  const files = new Map<string, string>()
+  engine(on, 'KAN-55-invite', cost, files)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'First' } as never)
+  cost.usd = 0.3
+  await $.turn.complete(finish)
+
+  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Where should I keep the numbers/ })).toBeTruthy()
+  await ui.press({ key: 'storage-local' })
+  expect(JSON.parse(files.get('/work/app/.pigment/config.json') ?? '{}').storage).toBe('local')
+  expect(files.get('/work/app/.pigment/.gitignore')).toMatch(/\*\.jsonl/)
+  const month = [...files.keys()].find(k => k.endsWith('.jsonl'))
+  expect(month).toMatch(/\/work\/app\/\.pigment\/me-\d{4}-\d{2}\.jsonl$/)
+  const line = JSON.parse((files.get(month!) ?? '').trim())
+  expect(line.ticket).toBe('KAN-55')
+  expect(Math.round(line.usd * 100)).toBe(30)
+  expect('label' in line).toBe(false)
+  expect(await ui.find({ type: 'Text', text: /Where should I keep the numbers/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('a developer joining a cloud project sees Developer setup and counts meanwhile', async ($, on) => {
+  const cost = { usd: 0, percent: 10 }
+  const files = new Map([['/work/app/.pigment/config.json', JSON.stringify({ version: 1, storage: 'cloud', serverUrl: 'https://pigment.team.example' })]])
+  const posts: string[] = []
+  engine(on, 'KAN-90-x', cost, files, posts)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'Hi' } as never)
+  cost.usd = 0.2
+  await $.turn.complete(finish)
+
+  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /pigment\.team\.example/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /1 waiting/ })).toBeTruthy()
+  expect(posts.length).toBe(0)
+  await ui.unmount()
+})
+
+test('with the team key, prompts go to the team server, waiting ones first', { options: { teamKey: 'k3y', person: 'Ana' } }, async ($, on) => {
+  const cost = { usd: 0, percent: 10 }
+  const files = new Map([['/work/app/.pigment/config.json', JSON.stringify({ version: 1, storage: 'cloud', serverUrl: 'https://pigment.team.example/' })]])
+  const posts: string[] = []
+  engine(on, 'KAN-90-x', cost, files, posts)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'Hi' } as never)
+  cost.usd = 0.2
+  await $.turn.complete(finish)
+  const prompts = posts.filter(p => p.startsWith('https://pigment.team.example/v1/prompt '))
+  expect(prompts.length).toBe(1)
+  const body = JSON.parse(prompts[0]!.slice(prompts[0]!.indexOf(' ') + 1))
+  expect(body.person).toBe('Ana')
+  expect(body.ticket).toBe('KAN-90')
+  const ui = await $.ui.mount({ ...pane('Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Developer setup|Where should I keep/ })).toBeFalsy()
+  await ui.unmount()
 })

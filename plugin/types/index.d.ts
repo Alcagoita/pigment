@@ -32,6 +32,12 @@ export type Work = {
   snoozed: Signal[]
   isBusy: boolean
   handoffPath?: string
+  /** Where the numbers go: chosen yet, on this computer, the team cloud, or the cloud waiting for this person's key. */
+  storage: 'unchosen' | 'local' | 'cloud' | 'cloud-needs-key'
+  serverUrl?: string
+  /** Rows waiting to be written to the chosen place. */
+  waiting: number
+  storageCard: 'ask' | 'cloud-help' | 'hidden'
 }
 
 /** One task's total. */

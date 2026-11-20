@@ -1,6 +1,6 @@
 {
   "name": "pigment",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "What your prompts, tasks and sessions cost, beside the chat — and for a manager, the sprint by task and who is working now. A calm nudge to start fresh when a conversation gets long.",
   "author": {
     "name": "Olegário Nascimento"
@@ -33,20 +33,20 @@
     "serverUrl": {
       "type": "string",
       "title": "Team server",
-      "description": "The team's Pigment server URL. Empty keeps everything on this computer.",
+      "description": "Only for projects without .pigment/config.json; that file normally holds the team server's address.",
       "default": ""
     },
     "teamKey": {
       "type": "string",
       "title": "Team key",
-      "description": "The key the team server was set up with.",
+      "description": "The key whoever set up the project shares with you privately.",
       "sensitive": true,
       "default": ""
     },
     "jiraSite": {
       "type": "string",
       "title": "Jira site",
-      "description": "For the sprint list, e.g. yourteam.atlassian.net. Empty shows the last two weeks by task.",
+      "description": "Manager view: the Jira site for the open sprint, e.g. yourteam.atlassian.net. Can also live in .pigment/config.json.",
       "default": ""
     },
     "jiraProject": {

@@ -20,7 +20,7 @@ Answer `y` to add the marketplace, then pick a scope. The pane opens on the side
 
 ## Two views
 
-Pick one in the plugin's settings (**View**).
+Pick one in `/config`, under Pigment (**View**).
 
 **Your work** (developer)
 - **This prompt** — what the last prompt cost, tokens written and read from memory
@@ -33,34 +33,57 @@ Pick one in the plugin's settings (**View**).
 - **By task** — each ticket in the sprint with its cost; spending on branches without a ticket shows as "No ticket"
 - **Working now** — each session active in the last ten minutes, with its person, task and running cost
 
-The ticket comes from the branch name: `KAN-55-invite-link` → KAN-55, `12-invite` → #12. A team that names branches after tickets (Gitflow with ticket keys) needs nothing else.
+The ticket comes from the branch name: `KAN-55-invite-link` → KAN-55, `12-invite` → #12. A team that names branches after tickets needs nothing else.
+
+## Where the numbers live
+
+The first time Pigment runs in a project, it asks: **"Where should I keep the numbers?"**
+
+- **In your cloud** — safe if a computer goes, and a team sees the sprint together. Needed for a team.
+- **Just on this computer** — a file per person and month in the project's `.pigment/` folder (`.pigment/ana-2026-11.jsonl`), kept out of git. Nothing leaves your machine. It isn't backed up.
+
+Until you choose, Pigment keeps counting and holds the numbers until they have a place, so nothing is lost. The choice is written to `.pigment/config.json` in the project — never a key, only where the numbers go — so everyone who opens the project finds the same answer.
+
+Only numbers are ever stored: the ticket, the session, a display name, cost and token counts. Never prompts, answers or code.
+
+## Solo setup
+
+Install, open your project, and answer the question. That's all. Choose the cloud later whenever you like; whatever was counted locally is sent once the server is set.
+
+## Manager setup (a team, once)
+
+Whoever sets up the project does this once.
+
+1. Install Pigment and set **View** to `manager` in `/config`.
+2. Set up the team server on Cloudflare (the free plan is enough). From a clone of this repository:
+   ```bash
+   server/setup.sh --project /path/to/your/project
+   ```
+   You log in to Cloudflare in the browser; the script creates the database, the team key and the server, and writes `.pigment/config.json` in your project. The key is saved to a private file on your computer (`~/.pigment/keys/…`) and never printed.
+3. Commit `.pigment/config.json` (and `.pigment/.gitignore`) to the project.
+4. Add the team key in `/config` under Pigment, and, for the sprint list, the Jira site, project key, email and API token.
+5. Share the team key with each developer privately: a password manager or a direct message, never the repository or a public channel.
+
+## Developer setup (joining a team)
+
+The project already has Pigment configured (`.pigment/config.json` is in the repository).
+
+1. Install Pigment (the line above).
+2. Open the project. Pigment finds the team's server and shows **Developer setup**.
+3. Ask whoever set up the project for the team key, and add it in `/config` under Pigment: **Team key**, and **Your name** (how you appear in the sprint).
+
+That's all. Until the key is in, Pigment counts on your computer and sends it all once it can.
 
 ## Settings
 
-| Setting | What it does |
-|---|---|
-| View | `developer` or `manager` |
-| Project folder | Count only sessions inside this folder. Empty counts every session. |
-| Your name | How you appear in the team's sprint view |
-| Team server, Team key | Share numbers with the team (below). Empty keeps everything on this computer. |
-| Jira site, project key, email, API token | For the sprint's ticket list. Without them, the sprint view shows the last two weeks by task. |
-
-Keys and tokens are stored in Claude Code's secure storage, never in a file of the project.
-
-## Alone, or as a team
-
-**Alone:** nothing to set up. Pigment keeps a ledger on this computer, across sessions, per project folder. The sprint view shows your own sessions.
-
-**As a team:** deploy the small server in `server/` once (a Cloudflare Worker with a D1 database, free tier), give everyone its URL and the team key, and every developer's Pigment sends **numbers only** to it: the ticket, the session, the person's display name, the cost and token counts. Never prompts, answers or code. The manager's view reads from it, every 15 seconds.
-
-```bash
-cd server
-npx wrangler login
-npx wrangler d1 create pigment            # copy the database_id into wrangler.toml
-npx wrangler d1 execute pigment --remote --file schema.sql
-npx wrangler secret put TEAM_KEY        # a long random key; share it with the team privately
-npx wrangler deploy
-```
+| Setting | Who | What it does |
+|---|---|---|
+| View | everyone | `developer` or `manager` |
+| Your name | team | How you appear in the sprint view |
+| Team key | team | The key the team server was set up with (kept in secure storage) |
+| Project folder | optional | Count only sessions inside this folder |
+| Team server | optional | Only for projects without `.pigment/config.json` |
+| Jira site, project key, email, API token | manager | The open sprint's ticket list. Without them, the sprint view shows the last two weeks by task |
 
 ## Read it kindly
 
@@ -69,8 +92,9 @@ Pigment leads with tasks and the sprint, not with people. It's there to see how 
 ## Develop
 
 - `node server/test.mjs` — the server, against an in-memory database
-- `claude plugin test plugin` — the mod, both views, on terminal and desktop
+- `claude plugin test plugin` — the mod: both views, the storage choice, developer setup, sending to the server
 - `claude plugin validate plugin`
+- `server/setup.sh --project <folder> --dry-run` — what the server setup would do
 
 ## Licence
 

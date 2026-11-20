@@ -117,3 +117,85 @@ export function sprintRows(
   }
   return costs.filter(c => now - c.lastAt < 14 * 24 * 3_600_000).sort((a, b) => b.lastAt - a.lastAt)
 }
+
+// ── Where the numbers live ─────────────────────────────────────────────
+
+/** `.pigment/config.json`, committed with the project: shared, never secret. */
+export type ProjectConfig = {
+  version: 1
+  storage: 'local' | 'cloud'
+  provider?: 'cloudflare'
+  serverUrl?: string
+  jira?: { site: string; project: string }
+}
+
+/** What this session can do with the numbers right now. */
+export type StorageStatus = 'unchosen' | 'local' | 'cloud' | 'cloud-needs-key'
+
+export function parseConfig(text: string | null): ProjectConfig | null {
+  if (!text) return null
+  try {
+    const c = JSON.parse(text) as Partial<ProjectConfig>
+    if (c.storage !== 'local' && c.storage !== 'cloud') return null
+    const serverUrl = typeof c.serverUrl === 'string' ? c.serverUrl.trim().replace(/\/+$/, '') : undefined
+    const jira = c.jira && typeof c.jira.site === 'string' && typeof c.jira.project === 'string' ? c.jira : undefined
+    return { version: 1, storage: c.storage, provider: c.provider === 'cloudflare' ? 'cloudflare' : undefined, serverUrl, jira }
+  } catch {
+    return null
+  }
+}
+
+export function statusFor(config: ProjectConfig | null, settings: { serverUrl: string; teamKey: string }): StorageStatus {
+  const serverUrl = config?.serverUrl || settings.serverUrl
+  const storage = config?.storage ?? (settings.serverUrl ? 'cloud' : undefined)
+  if (!storage) return 'unchosen'
+  if (storage === 'local') return 'local'
+  return serverUrl && settings.teamKey ? 'cloud' : 'cloud-needs-key'
+}
+
+export function slug(name: string): string {
+  return name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'me'
+}
+
+/** One line of a local `.pigment/<person>-<yyyy-mm>.jsonl` file: numbers only. */
+export type Line = {
+  at: number; session: string; person: string; ticket: string; usd: number
+  input: number; output: number; cacheRead: number; cacheWrite: number
+}
+
+export function toLine(row: PromptCost, session: string, person: string): Line {
+  return {
+    at: row.at, session, person, ticket: row.ticket, usd: row.usd,
+    input: row.input, output: row.output, cacheRead: row.cacheRead, cacheWrite: row.cacheWrite,
+  }
+}
+
+export function fileFor(person: string, at: number): string {
+  return `.pigment/${slug(person)}-${new Date(at).toISOString().slice(0, 7)}.jsonl`
+}
+
+/** Reads JSONL text, skipping any line that does not parse (a half-written last line). */
+export function parseLines(text: string): Line[] {
+  const out: Line[] = []
+  for (const raw of text.split('\n')) {
+    if (!raw.trim()) continue
+    try {
+      const l = JSON.parse(raw) as Line
+      if (typeof l.usd === 'number' && typeof l.ticket === 'string') out.push(l)
+    } catch { /* skip */ }
+  }
+  return out
+}
+
+/** Task totals and recent sessions from local lines (every person's files in the folder). */
+export function fromLines(lines: Line[]): { tasks: TaskCost[]; sessions: LiveSession[] } {
+  const tasks = new Map<string, TaskCost>()
+  const sessions = new Map<string, LiveSession>()
+  for (const l of lines) {
+    const t = tasks.get(l.ticket) ?? { ticket: l.ticket, usd: 0, prompts: 0, lastAt: 0 }
+    tasks.set(l.ticket, { ...t, usd: t.usd + l.usd, prompts: t.prompts + 1, lastAt: Math.max(t.lastAt, l.at) })
+    const s = sessions.get(l.session) ?? { session: l.session, person: l.person, ticket: l.ticket, usd: 0, lastAt: 0 }
+    sessions.set(l.session, { ...s, ticket: l.at >= s.lastAt ? l.ticket : s.ticket, usd: s.usd + l.usd, lastAt: Math.max(s.lastAt, l.at) })
+  }
+  return { tasks: [...tasks.values()], sessions: [...sessions.values()] }
+}
