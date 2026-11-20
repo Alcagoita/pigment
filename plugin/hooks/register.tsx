@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
-  addPrompt, ago, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, parseConfig, parseLines,
+  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, quietFrom, parseConfig, parseLines,
   prune, reasonText, signalsFor, sprintIssue, sprintRows, statusFor, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import type { JiraIssue, Line, ProjectConfig, SprintIssue, StorageStatus } from './lib'
@@ -19,8 +19,8 @@ const EMPTY: Work = {
   storage: 'unchosen', waiting: 0, storageCard: 'ask',
 }
 // Bump a tag when its type's fields change: older stored values are read as the initial value.
-const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-2' })
-const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-1' })
+const work = atom({ plugin: 'pigment', key: 'work' } as const, EMPTY, { shape: 'work-3' })
+const sprint = atom({ plugin: 'pigment', key: 'sprint' } as const, null, { shape: 'sprint-2' })
 
 type Options = {
   role?: string; projectFolder?: string; person?: string; serverUrl?: string; teamKey?: string
@@ -120,7 +120,7 @@ async function migrate($: EngineInterface, c: Ctx) {
   const now = await $.clock.now()
   const lines: Line[] = Object.values(l.tasks).filter(t => t.usd > 0).map(t => ({
     at: t.lastAt || now, session: 'earlier', person: c.person, ticket: t.ticket, usd: t.usd,
-    input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+    input: 0, output: 0, cacheRead: 0, cacheWrite: 0, activeMs: t.activeMs ?? 0,
   }))
   await $.store.set(queueKey(c), [...(await loadQueue($, c)), ...lines])
   await $.store.set(flag, true)
@@ -184,11 +184,13 @@ async function refreshSprint($: EngineInterface, c: Ctx) {
 
   let costs: TaskCost[]
   let live: LiveSession[]
+  let quietPool: LiveSession[] = []
   if (c.hasServer) {
     try {
       const h = { authorization: `Bearer ${c.teamKey}` }
       costs = (await getJson($, `${c.server}/v1/tasks`, h)) as TaskCost[]
       live = (await getJson($, `${c.server}/v1/live`, h)) as LiveSession[]
+      quietPool = live
     } catch {
       note = "I couldn't reach the team server just now. I'll try again in a moment."
       const l = await loadLedger($, c)
@@ -202,11 +204,14 @@ async function refreshSprint($: EngineInterface, c: Ctx) {
     const lines = (await Promise.all(files.map(f => $.fs.read(`${dir}/${f.name}`)))).flatMap(parseLines)
     const fromFiles = fromLines([...lines, ...(await loadQueue($, c))])
     costs = fromFiles.tasks
-    live = [...Object.values((await loadLedger($, c)).sessions), ...fromFiles.sessions]
+    const mine = Object.values((await loadLedger($, c)).sessions)
+    live = [...mine, ...fromFiles.sessions.filter(f => !mine.some(m => m.session === f.session))]
+    quietPool = mine // only this computer knows which of its sessions ended
   } else {
     const l = await loadLedger($, c)
     costs = Object.values(l.tasks)
     live = Object.values(l.sessions)
+    quietPool = live
   }
   const tasks = sprintRows(costs, js?.issues ?? null, now)
   const next: Sprint = {
@@ -216,6 +221,7 @@ async function refreshSprint($: EngineInterface, c: Ctx) {
     tasks,
     total: tasks.reduce((n, t) => n + t.usd, 0),
     live: liveFrom(live, now),
+    quiet: quietFrom(quietPool, now),
     updatedAt: now,
     note,
   }
@@ -295,10 +301,11 @@ export const register: Register = (on, options) => {
       const now = await $.session.usage()
       const ticket = await branchTicket($, c)
       const label = e.text.replace(/\s+/g, ' ').trim().slice(0, 60) || '(no text)'
+      const at = await $.clock.now()
       const l = ticket === w.ticket ? null : await loadLedger($, c)
       await update($, work, x => ({
         ...x, ticket, taskUsd: l ? l.tasks[ticket]?.usd ?? 0 : x.taskUsd,
-        pendingUsd: now.cost?.usd ?? x.sessionUsd, pendingLabel: label,
+        pendingUsd: now.cost?.usd ?? x.sessionUsd, pendingLabel: label, pendingAt: at,
       }))
     }
     return next(e)
@@ -313,8 +320,10 @@ export const register: Register = (on, options) => {
     const now = await $.session.usage()
     const total = now.cost?.usd ?? w.sessionUsd
     const u = e.usage
+    const endAt = await $.clock.now()
     const row: PromptCost = {
-      at: await $.clock.now(),
+      at: endAt,
+      activeMs: activeFor(w.pendingAt ?? endAt, endAt, w.lastEndAt),
       label: w.pendingLabel,
       ticket: w.ticket,
       usd: Math.max(0, total - (w.pendingUsd ?? total)),
@@ -335,6 +344,7 @@ export const register: Register = (on, options) => {
         ...x, sessionUsd: total, taskUsd: l.tasks[row.ticket]?.usd ?? x.taskUsd,
         hasUnknownPrice: now.cost?.hasUnknownPrice === true, contextPercent: now.context.percent,
         prompts: [...x.prompts, row].slice(-200), pendingUsd: undefined, pendingLabel: undefined,
+        pendingAt: undefined, lastEndAt: endAt,
         waiting: left,
       }
       const isNew = signalsFor(updated).some(s => !before.includes(s))
@@ -359,6 +369,19 @@ export const register: Register = (on, options) => {
         contextPercent: e.context.percent ?? x.contextPercent,
       }))
       await beat($, c, await read($, work))
+    }
+    return next(e)
+  })
+
+  // A session that closes says so, so the manager view never mistakes it for a quiet one.
+  on('session.end', async ($, e, next) => {
+    const w = await read($, work)
+    if (w.isMeasured && c.sessionId) {
+      const now = await $.clock.now()
+      const l = await loadLedger($, c)
+      const s = l.sessions[c.sessionId]
+      if (s) await $.store.set(ledgerKey(c), { ...l, sessions: { ...l.sessions, [c.sessionId]: { ...s, endedAt: now } } })
+      void send($, c, '/v1/heartbeat', { session: c.sessionId, person: c.person, ticket: w.ticket, usd: w.sessionUsd, ended: true })
     }
     return next(e)
   })
@@ -416,6 +439,7 @@ export const register: Register = (on, options) => {
       const heading = s.name ? `${s.name} so far` : 'The last two weeks'
       const doing = inDevelopment(s.tasks, now, s.source === 'jira')
       const look = lookText(s.tasks, now)
+      const quiet = (s.quiet ?? []).map(q => `${q.person === 'me' ? 'Your' : `${q.person}'s`} session on ${q.ticket} has been quiet for ${duration(now - q.lastAt)}.`)
       const room = Math.max(3, rows - 18 - s.live.length - doing.length)
       const mark = (t: TaskCost) => {
         const l = timeFor(t, now)?.look
@@ -431,10 +455,13 @@ export const register: Register = (on, options) => {
             {s.note && <Text dimColor>{s.note}</Text>}
           </Box>
 
-          {look && (
+          {(look || quiet.length > 0) && (
             <Box flexDirection="column" borderStyle="round" paddingX={1}>
               <Text bold>Worth a look</Text>
-              <Text>{look}</Text>
+              {look && <Text>{look}</Text>}
+              {quiet.slice(0, 4).map(q => <Text>{q}</Text>)}
+              {quiet.length > 4 && <Text dimColor>{quiet.length - 4} more quiet sessions.</Text>}
+              {quiet.length > 0 && <Text dimColor>A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text>}
             </Box>
           )}
 
@@ -471,7 +498,7 @@ export const register: Register = (on, options) => {
               </Text>
             ))}
           </Box>
-          <Text dimColor>Time runs from when a task started until it's done, nights and weekends included.</Text>
+          <Text dimColor>Time is what was worked in sessions: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.</Text>
           {estimate}
         </Box>
       )

@@ -9,6 +9,8 @@ export type PromptCost = {
   cacheRead: number
   cacheWrite: number
   contextPercent?: number
+  /** Time actually worked for this prompt: the turn itself, plus reading and thinking before it (up to IDLE_MS). */
+  activeMs: number
 }
 
 /** Why the developer view suggests a fresh start. */
@@ -29,6 +31,9 @@ export type Work = {
   prompts: PromptCost[]
   pendingUsd?: number
   pendingLabel?: string
+  pendingAt?: number
+  /** When the last turn ended, for the reading-and-thinking time before the next prompt. */
+  lastEndAt?: number
   snoozed: Signal[]
   isBusy: boolean
   handoffPath?: string
@@ -45,6 +50,8 @@ export type TaskCost = {
   ticket: string; summary?: string; usd: number; prompts: number; lastAt: number
   /** First prompt Pigment counted on this ticket. */
   firstAt?: number
+  /** Time worked on this ticket in sessions, summed across people and days. */
+  activeMs?: number
   /** When the task started (Jira: left its first status), else firstAt. */
   startedAt?: number
   /** When it finished (Jira: resolved); absent while open. */
@@ -56,7 +63,7 @@ export type TaskCost = {
 }
 
 /** One session that has been active recently. */
-export type LiveSession = { session: string; person: string; ticket: string; usd: number; lastAt: number }
+export type LiveSession = { session: string; person: string; ticket: string; usd: number; lastAt: number; endedAt?: number }
 
 /** The sprint, as the manager view draws it. */
 export type Sprint = {
@@ -66,6 +73,8 @@ export type Sprint = {
   tasks: TaskCost[]
   total: number
   live: LiveSession[]
+  /** Sessions still open but quiet for a while. */
+  quiet: LiveSession[]
   updatedAt: number
   note?: string
 }

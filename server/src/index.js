@@ -2,12 +2,13 @@
 // person's display name, cost and token counts. Never prompts, answers or code.
 //
 // Every request needs `Authorization: Bearer <TEAM_KEY>` (a Worker secret).
-//   POST /v1/prompt     {session, person, ticket, usd, input, output, cacheRead, cacheWrite, at}
-//   POST /v1/heartbeat  {session, person, ticket, usd, lastAt}
-//   GET  /v1/tasks      -> [{ticket, usd, prompts, firstAt, lastAt}]   (all tasks; the mod picks the sprint's)
-//   GET  /v1/live       -> [{session, person, ticket, usd, lastAt}] active in the last 10 minutes
+//   POST /v1/prompt     {session, person, ticket, usd, input, output, cacheRead, cacheWrite, activeMs}
+//   POST /v1/heartbeat  {session, person, ticket, usd, ended?}   ended: the session closed
+//   GET  /v1/tasks      -> [{ticket, usd, prompts, firstAt, lastAt, activeMs}]   (all tasks; the mod picks the sprint's)
+//   GET  /v1/live       -> [{session, person, ticket, usd, lastAt}] open sessions seen in the last 12 hours
 
-const LIVE_MS = 10 * 60_000
+const OPEN_MS = 12 * 3_600_000
+const MAX_ACTIVE_MS = 24 * 3_600_000
 const MAX = { text: 80, usd: 10_000, tokens: 50_000_000 }
 
 const json = (body, status = 200) => Response.json(body, { status })
@@ -39,30 +40,34 @@ export async function handle(request, env, now = Date.now()) {
 
     if (url.pathname === '/v1/prompt') {
       await env.DB.prepare(
-        'INSERT INTO prompts (at, session, person, ticket, usd, input, output, cache_read, cache_write) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)'
+        'INSERT INTO prompts (at, session, person, ticket, usd, input, output, cache_read, cache_write, active_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)'
       ).bind(at, session, person, ticket, usd, num(b.input, MAX.tokens), num(b.output, MAX.tokens),
-        num(b.cacheRead, MAX.tokens), num(b.cacheWrite, MAX.tokens)).run()
+        num(b.cacheRead, MAX.tokens), num(b.cacheWrite, MAX.tokens), num(b.activeMs, MAX_ACTIVE_MS)).run()
     }
     // The session row: its running cost (heartbeat) or its total after a prompt.
-    const sessionUsd = url.pathname === '/v1/heartbeat' ? usd : null
+    const isBeat = url.pathname === '/v1/heartbeat'
+    const sessionUsd = isBeat ? usd : null
+    const endedAt = isBeat && b.ended === true ? at : null
+    // A closing session keeps its last activity time; anything else is activity.
     await env.DB.prepare(
-      `INSERT INTO sessions (session, person, ticket, usd, last_at) VALUES (?1,?2,?3,COALESCE(?4,0),?5)
-       ON CONFLICT(session) DO UPDATE SET person=?2, ticket=?3, usd=COALESCE(?4, usd), last_at=?5`
-    ).bind(session, person, ticket, sessionUsd, at).run()
+      `INSERT INTO sessions (session, person, ticket, usd, last_at, ended_at) VALUES (?1,?2,?3,COALESCE(?4,0),?5,?6)
+       ON CONFLICT(session) DO UPDATE SET person=?2, ticket=?3, usd=COALESCE(?4, usd),
+         last_at=CASE WHEN ?6 IS NULL THEN ?5 ELSE last_at END, ended_at=COALESCE(?6, ended_at)`
+    ).bind(session, person, ticket, sessionUsd, at, endedAt).run()
     return new Response(null, { status: 204 })
   }
 
   if (request.method === 'GET' && url.pathname === '/v1/tasks') {
     const { results } = await env.DB.prepare(
-      'SELECT ticket, SUM(usd) AS usd, COUNT(*) AS prompts, MIN(at) AS firstAt, MAX(at) AS lastAt FROM prompts GROUP BY ticket'
+      'SELECT ticket, SUM(usd) AS usd, COUNT(*) AS prompts, MIN(at) AS firstAt, MAX(at) AS lastAt, SUM(active_ms) AS activeMs FROM prompts GROUP BY ticket'
     ).all()
     return json(results)
   }
 
   if (request.method === 'GET' && url.pathname === '/v1/live') {
     const { results } = await env.DB.prepare(
-      'SELECT session, person, ticket, usd, last_at AS lastAt FROM sessions WHERE last_at > ?1 ORDER BY last_at DESC'
-    ).bind(now - LIVE_MS).all()
+      'SELECT session, person, ticket, usd, last_at AS lastAt FROM sessions WHERE ended_at IS NULL AND last_at > ?1 ORDER BY last_at DESC'
+    ).bind(now - OPEN_MS).all()
     return json(results)
   }
 

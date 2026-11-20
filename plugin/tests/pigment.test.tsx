@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { addPrompt, duration, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText } from '../hooks/lib'
+import { activeFor, addPrompt, duration, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom } from '../hooks/lib'
 import type { PromptCost } from '../types'
 
 const pane = (title: string) => ({
@@ -11,7 +11,7 @@ const pane = (title: string) => ({
 }) as const
 
 const row = (ticket: string, usd: number, at = 1): PromptCost => ({
-  at, label: 'x', ticket, usd, input: 100, output: 50, cacheRead: 5_000, cacheWrite: 0,
+  at, label: 'x', ticket, usd, input: 100, output: 50, cacheRead: 5_000, cacheWrite: 0, activeMs: 60_000,
 })
 
 test('a branch names its ticket', () => {
@@ -175,24 +175,33 @@ test('with the team key, prompts go to the team server, waiting ones first', { o
   await ui.unmount()
 })
 
-test('time per task: started until done, or until now while open; near and over its estimate', () => {
+test('time per task is worked time; near and over its estimate; active time and quiet sessions', () => {
   const H = 3_600_000
   const now = 100 * H
-  const t045 = { ticket: 'KAN-045', usd: 4, prompts: 3, lastAt: now, startedAt: now - 5 * H, estimateMs: 6 * H, stage: 'doing' as const }
-  const t96 = { ticket: 'KAN-96', usd: 1, prompts: 1, lastAt: now, startedAt: now - 2 * H, stage: 'doing' as const }
-  const t12 = { ticket: 'KAN-12', usd: 2, prompts: 2, lastAt: now, startedAt: now - 30 * H, doneAt: now - 27 * H, estimateMs: 2 * H, stage: 'done' as const }
-  const late = { ticket: 'KAN-50', usd: 0, prompts: 0, lastAt: 0, startedAt: now - 7 * H, estimateMs: 6 * H, stage: 'doing' as const }
+  // Worked time, not the clock: KAN-045 started 3 days ago but has 5h of work in it.
+  const t045 = { ticket: 'KAN-045', usd: 4, prompts: 3, lastAt: now, startedAt: now - 72 * H, activeMs: 5 * H, estimateMs: 6 * H, stage: 'doing' as const }
+  const t96 = { ticket: 'KAN-96', usd: 1, prompts: 1, lastAt: now, activeMs: 2 * H, stage: 'doing' as const }
+  const t12 = { ticket: 'KAN-12', usd: 2, prompts: 2, lastAt: now, activeMs: 3 * H, doneAt: now - 27 * H, estimateMs: 2 * H, stage: 'done' as const }
+  const late = { ticket: 'KAN-50', usd: 0, prompts: 0, lastAt: 0, activeMs: 7 * H, estimateMs: 6 * H, stage: 'doing' as const }
 
   expect(timeText(t045, now)).toBe('5h of 6h')
   expect(timeFor(t045, now)?.look).toBe('near')
   expect(timeText(t96, now)).toBe('2h')
   expect(timeFor(t96, now)?.look).toBe(null)
-  expect(timeText(t12, now)).toBe('3h, done')
+  expect(timeText(t12, now)).toBe('3h worked, done')
   expect(timeFor(t12, now)?.look).toBe(null) // done tasks never need a look
   expect(timeFor(late, now)?.look).toBe('over')
   expect(lookText([t045, t96], now)).toBe('KAN-045 has used 5h of its 6h.')
   expect(lookText([late, t045], now)).toBe('KAN-50 has gone past its 6h: 7h so far. 1 more task needs a look too.')
   expect(inDevelopment([t96, t12, t045, late], now, true).map(t => t.ticket)).toEqual(['KAN-50', 'KAN-045', 'KAN-96'])
+  // Active time: the turn, plus a short gap before it; a long pause doesn't count.
+  const M = 60_000
+  expect(activeFor(10 * M, 14 * M, 5 * M)).toBe(9 * M)
+  expect(activeFor(100 * M, 104 * M, 5 * M)).toBe(4 * M)
+  expect(activeFor(10 * M, 14 * M, undefined)).toBe(4 * M)
+  // Quiet: open and silent 45m+, but not forgotten for 12h; closed sessions never.
+  const s = (id: string, lastAt: number, endedAt?: number) => ({ session: id, person: 'Ana', ticket: 'KAN-045', usd: 1, lastAt, endedAt })
+  expect(quietFrom([s('a', now - 80 * M), s('b', now - 5 * M), s('c', now - 80 * M, now - 70 * M), s('d', now - 13 * H)], now).map(x => x.session)).toEqual(['a'])
   expect(duration(45 * 60_000)).toBe('45m')
   expect(duration(2 * H + 10 * 60_000)).toBe('2h 10m')
   expect(duration(76 * H)).toBe('3d 4h')
@@ -223,7 +232,7 @@ test('The sprint with Jira: In development with time, and Worth a look', {
   const NOW = 1_000_000_000
   const iso = (ms: number) => new Date(ms).toISOString()
   const cost = { usd: 0, percent: 10 }
-  engine(on, 'develop', cost, new Map(), [], { now: NOW, fetch: url =>
+  const store = engine(on, 'develop', cost, new Map(), [], { now: NOW, fetch: url =>
     url.includes('/board?') ? { values: [{ id: 7 }] }
       : url.includes('/sprint?state=active') ? { values: [{ id: 22, name: 'Sprint 22' }] }
       : { issues: [
@@ -233,6 +242,14 @@ test('The sprint with Jira: In development with time, and Worth a look', {
             changelog: { histories: [{ created: iso(NOW - 2 * H), items: [{ field: 'status' }] }] } },
           { key: 'KAN-10', fields: { summary: 'Later', status: { statusCategory: { key: 'new' } } } },
         ] } })
+  store.set('migrated:/work/app', true)
+  store.set('ledger:/work/app', {
+    tasks: {
+      'KAN-045': { ticket: 'KAN-045', usd: 10, prompts: 9, lastAt: NOW - 80 * 60_000, activeMs: 5 * H },
+      'KAN-96': { ticket: 'KAN-96', usd: 3, prompts: 4, lastAt: NOW, activeMs: 2 * H },
+    },
+    sessions: { 'old': { session: 'old', person: 'me', ticket: 'KAN-045', usd: 10, lastAt: NOW - 80 * 60_000 } },
+  })
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'pigment', args: '' } as never)
 
@@ -244,6 +261,7 @@ test('The sprint with Jira: In development with time, and Worth a look', {
     expect(await ui.find({ type: 'Text', text: /!  KAN-045 · 5h of 6h · Invite link/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /KAN-96 · 2h · Share sheet/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /KAN-10 · not started/ })).toBeFalsy()
+    expect(await ui.find({ type: 'Text', text: /^Your session on KAN-045 has been quiet for 1h 20m\.$/ })).toBeTruthy()
     await ui.unmount()
   }
 })

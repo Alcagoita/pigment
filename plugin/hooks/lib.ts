@@ -12,6 +12,25 @@ export const REREAD_TOKENS = 30_000
 export const REREAD_SHARE = 0.4
 /** A session counts as working now if it did something in this window. */
 export const LIVE_MS = 10 * 60_000
+/** A gap between prompts up to this long is reading and thinking, and counts as work; longer is a pause. */
+export const IDLE_MS = 15 * 60_000
+/** An open session silent this long is worth a look; past QUIET_MAX_MS it's left alone (probably forgotten). */
+export const QUIET_MS = 45 * 60_000
+export const QUIET_MAX_MS = 12 * 3_600_000
+
+/** Active time for one prompt: the turn, plus the gap before it when it's short enough to be thinking. */
+export function activeFor(submitAt: number, endAt: number, lastEndAt: number | undefined): number {
+  const turn = Math.max(0, endAt - submitAt)
+  const gap = lastEndAt === undefined ? Infinity : submitAt - lastEndAt
+  return turn + (gap >= 0 && gap <= IDLE_MS ? gap : 0)
+}
+
+/** Open sessions that have gone quiet: not ended, silent for QUIET_MS, but not for half a day. */
+export function quietFrom(sessions: LiveSession[], now: number): LiveSession[] {
+  return sessions
+    .filter(s => s.endedAt === undefined && now - s.lastAt >= QUIET_MS && now - s.lastAt < QUIET_MAX_MS && s.ticket !== NO_TICKET)
+    .sort((a, b) => a.lastAt - b.lastAt)
+}
 
 /** The ticket a branch belongs to: `KAN-55-invite-link` → `KAN-55`, `12-invite` → `#12`. */
 export function ticketFrom(branch: string): string {
@@ -83,7 +102,7 @@ export const emptyLedger = (): Ledger => ({ tasks: {}, sessions: {} })
 export function addPrompt(l: Ledger, row: PromptCost, session: string, person: string, sessionUsd: number): Ledger {
   const t = l.tasks[row.ticket] ?? { ticket: row.ticket, usd: 0, prompts: 0, lastAt: 0 }
   return {
-    tasks: { ...l.tasks, [row.ticket]: { ...t, usd: t.usd + row.usd, prompts: t.prompts + 1, lastAt: row.at, firstAt: t.firstAt ?? row.at } },
+    tasks: { ...l.tasks, [row.ticket]: { ...t, usd: t.usd + row.usd, prompts: t.prompts + 1, lastAt: row.at, firstAt: t.firstAt ?? row.at, activeMs: (t.activeMs ?? 0) + row.activeMs } },
     sessions: { ...l.sessions, [session]: { session, person, ticket: row.ticket, usd: sessionUsd, lastAt: row.at } },
   }
 }
@@ -95,7 +114,7 @@ export function prune(l: Ledger, now: number): Ledger {
 }
 
 export function liveFrom(sessions: LiveSession[], now: number): LiveSession[] {
-  return sessions.filter(s => now - s.lastAt < LIVE_MS).sort((a, b) => b.lastAt - a.lastAt)
+  return sessions.filter(s => s.endedAt === undefined && now - s.lastAt < LIVE_MS).sort((a, b) => b.lastAt - a.lastAt)
 }
 
 /**
@@ -168,12 +187,14 @@ export function slug(name: string): string {
 export type Line = {
   at: number; session: string; person: string; ticket: string; usd: number
   input: number; output: number; cacheRead: number; cacheWrite: number
+  activeMs: number
 }
 
 export function toLine(row: PromptCost, session: string, person: string): Line {
   return {
     at: row.at, session, person, ticket: row.ticket, usd: row.usd,
     input: row.input, output: row.output, cacheRead: row.cacheRead, cacheWrite: row.cacheWrite,
+    activeMs: row.activeMs,
   }
 }
 
@@ -200,7 +221,7 @@ export function fromLines(lines: Line[]): { tasks: TaskCost[]; sessions: LiveSes
   const sessions = new Map<string, LiveSession>()
   for (const l of lines) {
     const t = tasks.get(l.ticket) ?? { ticket: l.ticket, usd: 0, prompts: 0, lastAt: 0 }
-    tasks.set(l.ticket, { ...t, usd: t.usd + l.usd, prompts: t.prompts + 1, lastAt: Math.max(t.lastAt, l.at), firstAt: Math.min(t.firstAt ?? l.at, l.at) })
+    tasks.set(l.ticket, { ...t, usd: t.usd + l.usd, prompts: t.prompts + 1, lastAt: Math.max(t.lastAt, l.at), firstAt: Math.min(t.firstAt ?? l.at, l.at), activeMs: (t.activeMs ?? 0) + (l.activeMs ?? 0) })
     const s = sessions.get(l.session) ?? { session: l.session, person: l.person, ticket: l.ticket, usd: 0, lastAt: 0 }
     sessions.set(l.session, { ...s, ticket: l.at >= s.lastAt ? l.ticket : s.ticket, usd: s.usd + l.usd, lastAt: Math.max(s.lastAt, l.at) })
   }
@@ -214,12 +235,11 @@ export const NEAR_SHARE = 0.8
 
 export type TaskTime = { elapsedMs: number; isOpen: boolean; look: 'over' | 'near' | null }
 
-/** Time since the task started, until it finished or until now while it's open; and whether it needs a look. */
-export function timeFor(t: TaskCost, now: number): TaskTime | null {
-  const start = t.startedAt ?? t.firstAt
-  if (start === undefined) return null
+/** Time worked on the task in sessions (not the clock on the wall), and whether it needs a look. */
+export function timeFor(t: TaskCost, _now: number): TaskTime | null {
+  if (!t.activeMs) return null
   const isOpen = t.doneAt === undefined
-  const elapsedMs = Math.max(0, (t.doneAt ?? now) - start)
+  const elapsedMs = t.activeMs
   let look: TaskTime['look'] = null
   if (isOpen && t.estimateMs && t.estimateMs > 0) {
     if (elapsedMs >= t.estimateMs) look = 'over'
@@ -243,7 +263,7 @@ export function timeText(t: TaskCost, now: number): string {
   const time = timeFor(t, now)
   if (!time) return ''
   const used = duration(time.elapsedMs)
-  if (!time.isOpen) return `${used}, done`
+  if (!time.isOpen) return `${used} worked, done`
   return t.estimateMs ? `${used} of ${duration(t.estimateMs)}` : used
 }
 
