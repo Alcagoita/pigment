@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
-  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, parseConfig, parseLines,
+  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, cleanKey, keyNameFrom, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, parseConfig, parseLines,
   isLogStatus, jiraStarted, MIN_LOG_MS, prune, reasonText, signalsFor, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import { figureCells, figureSvg } from './figures'
@@ -122,11 +122,43 @@ async function loadConfig($: EngineInterface, c: Ctx) {
   c.config = parseConfig(text)
   const settingsServer = (c.o.serverUrl ?? '').trim().replace(/\/+$/, '')
   c.server = c.config?.serverUrl || settingsServer
+  // The key: Pigment's setting first, else the file the server setup (or a paste) left on this computer.
+  c.teamKey = c.o.teamKey ?? ''
+  if (!c.teamKey && c.server) {
+    const file = await keyFile($, c)
+    if (file && (await $.fs.exists(file).catch(() => false))) c.teamKey = (await $.fs.read(file).catch(() => '')).trim()
+  }
   c.status = statusFor(c.config, { serverUrl: settingsServer, teamKey: c.teamKey })
   c.hasServer = c.status === 'cloud'
   c.jiraSite = c.config?.jira?.site || (c.o.jiraSite ?? '')
   c.jiraProject = c.config?.jira?.project || (c.o.jiraProject ?? '')
   c.hasJira = !!(c.jiraSite && c.jiraProject && c.o.jiraEmail && c.o.jiraToken)
+}
+
+async function keyFile($: EngineInterface, c: Ctx): Promise<string | null> {
+  const home = await $.env.get('HOME')
+  const name = keyNameFrom(c.server)
+  return home && name ? `${home}/.pigment/keys/${name}.txt` : null
+}
+
+/** A pasted key: checked with the server, then kept on this computer only (a file only you can read). */
+async function saveKey($: EngineInterface, c: Ctx, text: string) {
+  const key = cleanKey(text)
+  if (!key) { $.ui.toast("That doesn't look like a team key. It's one long line of letters and numbers."); return }
+  const check = await $.http.fetch(`${c.server}/v1/live`, { headers: { authorization: `Bearer ${key}` } }).catch(() => null)
+  if (!check) { $.ui.toast("I couldn't reach the team server just now. Nothing was saved; try again in a moment."); return }
+  if (check.status === 401) { $.ui.toast("The team server didn't accept that key. Check it with whoever set up the project."); return }
+  const name = keyNameFrom(c.server)
+  const r = await $.process.run(
+    ['sh', '-c', 'umask 077; mkdir -p "$HOME/.pigment/keys" && cat > "$HOME/.pigment/keys/$1.txt"', 'sh', name],
+    { stdin: key },
+  ).catch(() => null)
+  if (!r || r.exitCode !== 0) { $.ui.toast("I couldn't save the key on this computer. Nothing changed."); return }
+  await loadConfig($, c)
+  const left = await flush($, c)
+  await update($, work, (x): Work => ({ ...x, storage: c.status, waiting: left, storageCard: 'hidden' }))
+  if (c.role === 'manager') await refreshSprint($, c)
+  $.ui.toast(left === 0 ? "Connected. Everything waiting has been sent." : `Connected. ${left} still waiting; I'll keep trying.`)
 }
 
 function queueKey(c: Ctx) { return `queue:${c.root}` }
@@ -372,15 +404,17 @@ export const register: Register = (on, options) => {
     const ticket = isMeasured ? await branchTicket($, c) : NO_TICKET
     const l = isMeasured ? await loadLedger($, c) : emptyLedger()
     let waiting = 0
+    let hidden = false
     if (isMeasured) {
       await loadConfig($, c)
       await migrate($, c)
       waiting = await flush($, c)
+      hidden = (await $.store.get(`cardHidden:${c.root}:${c.status}`)) === true
     }
     await update($, work, (): Work => ({
       ...EMPTY, isMeasured, folder: c.folder, role, ticket, taskUsd: l.tasks[ticket]?.usd ?? 0,
       storage: c.status, serverUrl: c.server || undefined, waiting,
-      storageCard: c.status === 'unchosen' || c.status === 'cloud-needs-key' ? 'ask' : 'hidden',
+      storageCard: (c.status === 'unchosen' || c.status === 'cloud-needs-key') && !hidden ? 'ask' : 'hidden',
     }))
 
     await $.command.register({ name: 'pigment', description: 'Show what your work, your task and the sprint cost' })
@@ -529,7 +563,15 @@ export const register: Register = (on, options) => {
       </Box>
     )
     const host = (w0.serverUrl ?? '').replace(/^https?:\/\//, '')
-    const setCard = (storageCard: Work['storageCard']) => update($, work, x => ({ ...x, storageCard }))
+    const setCard = async (storageCard: Work['storageCard']) => {
+      // "Not now" holds until something changes (the key arrives, or the storage choice changes).
+      if (storageCard === 'hidden') await $.store.set(`cardHidden:${c.root}:${w0.storage}`, true)
+      await update($, work, x => ({ ...x, storageCard }))
+    }
+    const { Input } = $.ui.resolve(e) as unknown as { Input?: (p: { key: string; label?: string; placeholder?: string; submitLabel?: string; onSubmit: (v: string) => void }) => JSX.Element }
+    const keyBox = Input
+      ? <Input key="team-key" label="Team key" placeholder="Paste the team key here" submitLabel="Connect" onSubmit={v => saveKey($, c, v)} />
+      : <Text dimColor>Add it in /config, under Pigment (Team key).</Text>
     let storageCard = null
     if (w0.isMeasured && w0.storageCard !== 'hidden' && w0.storage === 'unchosen') {
       storageCard = w0.storageCard === 'cloud-help' ? (
@@ -556,10 +598,10 @@ export const register: Register = (on, options) => {
       storageCard = (
         <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
           <Text bold>Connect to the team server</Text>
-          <Text dimColor>The sprint view reads everyone's numbers from {host || 'the team server'}, so it needs the team key too.</Text>
-          <Text dimColor>1. Add the team key in /config, under Pigment. If you set the server up, it's saved on this computer under ~/.pigment/keys/.</Text>
-          <Text dimColor>2. Share the same key with each developer, privately.</Text>
-          <Text dimColor>Until then I show this computer's numbers{w0.waiting > 0 ? `, and ${w0.waiting} of yours are waiting to be sent` : ''}.</Text>
+          <Text dimColor>The team key is the password your team's numbers are kept under on {host || 'the team server'}. The sprint view needs it to show everyone's work.</Text>
+          <Text dimColor>I looked for it on this computer and didn't find it, so the server was probably set up somewhere else. Paste the key from there:</Text>
+          {keyBox}
+          <Text dimColor>It stays on this computer. Until then I show this computer's numbers{w0.waiting > 0 ? `, and ${w0.waiting} of yours are waiting to be sent` : ''}.</Text>
           <Box gap={1}><Button key="storage-later" label="Not now" onPress={() => setCard('hidden')} /></Box>
         </Box>
       )
@@ -567,10 +609,9 @@ export const register: Register = (on, options) => {
       storageCard = (
         <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
           <Text bold>Developer setup</Text>
-          <Text dimColor>This project keeps its numbers in the team's cloud{host ? ` (${host})` : ''}.</Text>
-          <Text dimColor>1. Ask whoever set up the project for the team key.</Text>
-          <Text dimColor>2. Add it in /config, under Pigment: Team key, and Your name.</Text>
-          <Text dimColor>I'm counting here meanwhile{w0.waiting > 0 ? ` (${w0.waiting} waiting)` : ''} and will send it all once the key is in.</Text>
+          <Text dimColor>This project keeps its numbers on the team server{host ? ` (${host})` : ''}. To join, paste the team key whoever set up the project gave you:</Text>
+          {keyBox}
+          <Text dimColor>It stays on this computer. I'm counting here meanwhile{w0.waiting > 0 ? ` (${w0.waiting} waiting)` : ''} and will send it all once you're connected.</Text>
           <Box gap={1}><Button key="storage-later" label="Not now" onPress={() => setCard('hidden')} /></Box>
         </Box>
       )

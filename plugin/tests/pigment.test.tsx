@@ -41,8 +41,9 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TestOn = Parameters<Extract<Parameters<typeof test>[1], (...args: any[]) => any>>[1]
 
-function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown } = {}) {
+function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown; runs?: { argv: string[]; stdin?: string }[] } = {}) {
   const store = new Map<string, unknown>()
+  on('env.get', (_, e) => ({ value: (e as unknown as { name: string }).name === 'HOME' ? '/home/t' : undefined }))
   on('fs.exists', (_, e) => { const p = (e as unknown as { path: string }).path; return { value: files.has(p) || [...files.keys()].some(k => k.startsWith(p + '/')) } })
   on('fs.read', (_, e) => ({ value: files.get((e as unknown as { path: string }).path) ?? '' }))
   on('fs.write', (_, e) => { const a = e as unknown as { path: string; text: string }; files.set(a.path, a.text); return { value: undefined } })
@@ -65,7 +66,14 @@ function engine(on: TestOn, branch: string, cost: { usd: number; percent: number
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 200_000, percent: cost.percent }, cost: { usd: cost.usd } } }))
   on('clock.now', () => ({ value: opts.now ?? 1_000_000 }))
   on('clock.every', () => ({ value: undefined }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: branch + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_, e) => {
+    const a = e as unknown as { argv: string[]; init?: { stdin?: string } }
+    if (a.argv[0] === 'sh') {
+      opts.runs?.push({ argv: a.argv, stdin: a.init?.stdin })
+      files.set('/home/t/.pigment/keys/' + a.argv[a.argv.length - 1] + '.txt', a.init?.stdin ?? '')
+    }
+    return { value: { exitCode: 0, stdout: branch + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('store.get', (_, e) => ({ value: store.get((e as unknown as { key: string }).key) }))
   on('store.set', (_, e) => { const a = e as unknown as { key: string; value: unknown }; store.set(a.key, a.value); return { value: undefined } })
   on('prompt.submit', (_, e) => ({ text: e.text }))
@@ -454,4 +462,48 @@ test('under the manager, one developer figure per person working now', { options
     expect(await ui.find({ type: 'Text', text: /^Leo$/ })).toBeFalsy()  // closed the session
     await ui.unmount()
   }
+})
+
+
+const CLOUD = JSON.stringify({ version: 1, storage: 'cloud', serverUrl: 'https://pigment-brush.team.workers.dev' })
+
+test('the key the setup saved on this computer connects by itself, no card', { options: { role: 'manager' } }, async ($, on) => {
+  const files = new Map([['/work/app/.pigment/config.json', CLOUD], ['/home/t/.pigment/keys/pigment-brush.txt', 'k3y-0123456789abcdef\n']])
+  const posts: string[] = []
+  engine(on, 'develop', { usd: 0, percent: 10 }, files, posts)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+  const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^Connect to the team server$/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('a developer pastes the team key: checked, saved on this computer, connected', async ($, on) => {
+  const files = new Map([['/work/app/.pigment/config.json', CLOUD]])
+  const runs: { argv: string[]; stdin?: string }[] = []
+  const posts: string[] = []
+  engine(on, 'KAN-9-x', { usd: 0, percent: 10 }, files, posts, { fetch: () => [], runs })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeTruthy()
+  await ui.input({ key: 'team-key', text: '  k3y-0123456789abcdef  ' } as never)
+  expect(runs.length).toBe(1)
+  expect(runs[0]!.stdin).toBe('k3y-0123456789abcdef')       // the key goes in on stdin,
+  expect(runs[0]!.argv.join(' ')).not.toMatch(/k3y-/)        // never on the command line
+  expect(runs[0]!.argv[runs[0]!.argv.length - 1]).toBe('pigment-brush')
+  expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('"Not now" holds after a reload', async ($, on) => {
+  const files = new Map([['/work/app/.pigment/config.json', CLOUD]])
+  engine(on, 'KAN-9-x', { usd: 0, percent: 10 }, files)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  let ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  await ui.press({ key: 'storage-later' })
+  await ui.unmount()
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true }) // what a reload runs again
+  ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^Developer setup$/ })).toBeFalsy()
+  await ui.unmount()
 })

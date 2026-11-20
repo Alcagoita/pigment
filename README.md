@@ -72,7 +72,7 @@ Whoever sets up the project does this once.
    ```
    You log in to Cloudflare in the browser; the script creates the database, the team key and the server, and writes `.pigment/config.json` and the project's `.claude/settings.json` (Pigment's marketplace, enabled for the project). The key is saved to a private file on your computer (`~/.pigment/keys/…`) and never printed.
 3. Commit `.pigment/` and `.claude/settings.json`. From then on, **everyone who opens the project in Claude Code is offered Pigment** — no install line to share.
-4. Add the team key in `/config` under Pigment, and, for the sprint list, the Jira site, project key, email and API token.
+4. Nothing to do for the key on this computer: Pigment finds the one the setup saved and connects by itself. For the sprint list, add the Jira site, project key, email and API token in `/config` under Pigment.
 5. Share the team key with each developer privately: a password manager or a direct message, never the repository or a public channel.
 
 ## Developer setup (joining a team)
@@ -81,7 +81,7 @@ The project already has Pigment configured (`.pigment/config.json` is in the rep
 
 1. Open the project in Claude Code and trust the folder. Claude Code offers to install Pigment, because the project asks for it — say yes. (Or install it with the line above.)
 2. Pigment starts by itself, finds the team's server and shows **Developer setup**.
-3. Ask whoever set up the project for the team key, and add it in `/config` under Pigment: **Team key**, and **Your name** (how you appear in the sprint).
+3. Paste the team key whoever set up the project gave you into the box in the pane and press **Connect**. Pigment checks it with the server and keeps it on your computer only (`~/.pigment/keys/`, readable only by you). Set **Your name** in `/config` under Pigment so you appear by name in the sprint.
 
 That's all. Until the key is in, Pigment counts on your computer and sends it all once it can.
 

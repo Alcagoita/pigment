@@ -399,3 +399,19 @@ export function teamNow(live: LiveSession[], thisSession: string): LiveSession[]
   }
   return [...byPerson.values()].sort((a, b) => a.person.localeCompare(b.person))
 }
+
+/** The key file's name for a server: `pigment-brush` from https://pigment-brush.<account>.workers.dev. */
+export function keyNameFrom(serverUrl: string): string {
+  try {
+    const host = new URL(serverUrl).hostname
+    return host.split('.')[0]?.replace(/[^a-z0-9-]/gi, '') ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** A pasted team key: trimmed, no spaces inside, long enough to be one. */
+export function cleanKey(text: string): string | null {
+  const k = text.trim()
+  return k.length >= 16 && !/\s/.test(k) ? k : null
+}
