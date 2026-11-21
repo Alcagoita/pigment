@@ -1,6 +1,6 @@
 {
   "name": "pigment",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "What your prompts, tasks and sessions cost, beside the chat — and for a manager, the sprint by task and who is working now. A calm nudge to start fresh when a conversation gets long.",
   "author": {
     "name": "Olegário Nascimento"
@@ -46,13 +46,13 @@
     "jiraSite": {
       "type": "string",
       "title": "Jira site",
-      "description": "Your Jira site, e.g. yourteam.atlassian.net. Manager: for the sprint list. Developer: to log worked time when a task reaches Testing. Can also live in .pigment/config.json.",
+      "description": "Only if Claude Code has no Atlassian connector signed in (then Pigment uses that, with nothing to set). Your Jira site, e.g. yourteam.atlassian.net. Can also live in .pigment/config.json.",
       "default": ""
     },
     "jiraProject": {
       "type": "string",
       "title": "Jira project key",
-      "description": "e.g. KAN",
+      "description": "e.g. KAN Usually not needed: Pigment takes it from the branch's ticket.",
       "default": ""
     },
     "jiraEmail": {

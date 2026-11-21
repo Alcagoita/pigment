@@ -4,7 +4,7 @@ import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
   activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, cleanKey, keyNameFrom, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, parseConfig, parseLines,
-  isLogStatus, jiraStarted, MIN_LOG_MS, prune, climbRatio, signalsFor, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
+  isLogStatus, jiraStarted, MIN_LOG_MS, prune, climbRatio, signalsFor, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import { figureCells, figureSvg } from './figures'
 import type { JiraIssue, Line, ProjectConfig, SprintIssue, StorageStatus } from './lib'
@@ -53,6 +53,11 @@ type Ctx = {
   root: string; sessionId: string; lastBeat: number
   config: ProjectConfig | null; status: StorageStatus
   jiraSite: string; jiraProject: string
+  /** How Jira is reached: the settings' own login, the Atlassian connector already signed in, or not at all. */
+  jira: JiraLink | null
+  jiraLookedAt: number
+  /** Why Jira isn't there, in a sentence for the pane; empty when it is, or when nothing was looked for yet. */
+  jiraWhy: string
   lastStatusCheck: number
   refreshing?: Promise<void>
   /** The pane's title as last set, so it's set again only when the sprint changes. */
@@ -61,19 +66,90 @@ type Ctx = {
 
 function jiraBase(c: Ctx) { return `https://${c.jiraSite.replace(/^https?:\/\//, '').replace(/\/+$/, '')}` }
 function jiraAuth(c: Ctx) { return { authorization: 'Basic ' + btoa(`${c.o.jiraEmail}:${c.o.jiraToken}`) } }
-function hasJiraLogin(c: Ctx) { return !!(c.jiraSite && c.o.jiraEmail && c.o.jiraToken) }
 const JIRA_KEY = /^[A-Z][A-Z0-9]{1,9}-\d+$/
+
+type JiraLink = { kind: 'rest'; project: string } | { kind: 'mcp'; server: string; cloudId: string; project: string }
+
+/**
+ * Jira without any setting: the person's own login when they gave one, else the Atlassian
+ * connector this session is already signed in to. Nothing to configure; looked for again
+ * every few minutes until it's there.
+ */
+async function findJira($: EngineInterface, c: Ctx): Promise<JiraLink | null> {
+  // A login in the settings: the project from the settings, else from the branch's ticket.
+  if (c.jiraSite && c.o.jiraEmail && c.o.jiraToken) {
+    return { kind: 'rest', project: c.jiraProject || projectFrom((await read($, work)).ticket) || '' }
+  }
+  if (c.jira) return c.jira
+  const now = await $.clock.now()
+  if (now - c.jiraLookedAt < 5 * 60_000) return null
+  c.jiraLookedAt = now
+  const usage = await $.session.usage({ breakdown: 'summary' }).catch(() => null)
+  const tools = usage?.context.breakdown?.mcpTools
+  const server = jiraServerFrom(tools ?? [])
+  if (!server) {
+    c.jiraWhy = tools ? "I don't see a Jira connection in this session." : "I couldn't check this session's connections for Jira."
+    return null
+  }
+  const w = await read($, work)
+  const project = c.jiraProject || projectFrom(w.ticket) || ((await $.store.get(`jiraProject:${c.root}`)) as string | undefined)
+  if (!project) {
+    c.jiraWhy = "Jira is connected, but this branch isn't named after a ticket, so I don't know the project yet."
+    return null
+  }
+  let sites: { id: string; url?: string }[] = []
+  try { sites = (await $.mcp.call(server, 'getAccessibleAtlassianResources').then(mcpJson)) as typeof sites } catch (err) {
+    c.jiraWhy = `I couldn't use the Jira connection (${server}): ${String((err as Error)?.message ?? err).slice(0, 120)}`
+    return null
+  }
+  const wanted = c.jiraSite.replace(/^https?:\/\//, '').replace(/\/+$/, '')
+  const order = wanted ? [...sites].sort((a, b) => Number((b.url ?? '').includes(wanted)) - Number((a.url ?? '').includes(wanted))) : sites
+  for (const site of order) {
+    // The site that knows the project is the one.
+    const ok = await $.mcp.call(server, 'searchJiraIssuesUsingJql', { cloudId: site.id, jql: `project = "${project}"`, maxResults: 1, fields: ['status'] })
+      .then(r => { mcpJson(r); return true }).catch(() => false)
+    if (!ok) continue
+    await $.store.set(`jiraProject:${c.root}`, project)
+    c.jira = { kind: 'mcp', server, cloudId: site.id, project }
+    c.jiraWhy = ''
+    return c.jira
+  }
+  c.jiraWhy = `Jira is connected, but none of its ${sites.length} ${sites.length === 1 ? 'site knows' : 'sites know'} the project ${project}.`
+  return null
+}
+
+/** Issues for a JQL search, every page, through whichever way Jira is reached. */
+async function jiraSearch($: EngineInterface, c: Ctx, link: JiraLink, jql: string, fields: string[]): Promise<JiraIssue[]> {
+  if (link.kind === 'rest') {
+    const r = (await getJson($, `${jiraBase(c)}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&fields=${fields.join(',')}&expand=changelog&maxResults=100`, jiraAuth(c))) as { issues?: JiraIssue[] }
+    return r.issues ?? []
+  }
+  const out: JiraIssue[] = []
+  let next: string | undefined
+  for (let n = 0; n < 20; n++) {
+    const page = issuesFrom(mcpJson(await $.mcp.call(link.server, 'searchJiraIssuesUsingJql', {
+      cloudId: link.cloudId, jql, fields, maxResults: 25, ...(next ? { nextPageToken: next } : {}),
+    })))
+    out.push(...page.issues)
+    if (!page.next) break
+    next = page.next
+  }
+  return out
+}
 
 /** When this person's task reaches the logging status (Testing), offer to log their unlogged worked time. */
 async function checkLogOffer($: EngineInterface, c: Ctx, force = false) {
   const w = await read($, work)
-  if (!w.isMeasured || !hasJiraLogin(c) || !JIRA_KEY.test(w.ticket)) return
+  if (!w.isMeasured || !JIRA_KEY.test(w.ticket)) return
   const now = await $.clock.now()
   if (!force && now - c.lastStatusCheck < 5 * 60_000) return
   c.lastStatusCheck = now
+  const link = await findJira($, c).catch(() => null)
+  if (!link) return
   let issue: { fields?: { status?: { name?: string; statusCategory?: { key?: string } } } }
   try {
-    issue = (await getJson($, `${jiraBase(c)}/rest/api/3/issue/${w.ticket}?fields=status`, jiraAuth(c))) as typeof issue
+    if (link.kind === 'rest') issue = (await getJson($, `${jiraBase(c)}/rest/api/3/issue/${w.ticket}?fields=status`, jiraAuth(c))) as typeof issue
+    else issue = ((await jiraSearch($, c, link, `key = ${w.ticket}`, ['status']))[0] ?? {}) as typeof issue
   } catch { return }
   const name = issue.fields?.status?.name ?? ''
   const ready = isLogStatus(name, issue.fields?.status?.statusCategory?.key, c.o.logOnStatus || 'Testing')
@@ -87,20 +163,30 @@ async function logWork($: EngineInterface, c: Ctx, offer: { ticket: string; ms: 
   await update($, work, x => ({ ...x, logOffer: x.logOffer && { ...x.logOffer, isBusy: true } }))
   const now = await $.clock.now()
   const seconds = worklogSeconds(offer.ms)
+  const note = 'Worked time counted by Pigment: time in sessions, pauses over 15 minutes left out.'
   try {
-    const r = await $.http.fetch(`${jiraBase(c)}/rest/api/3/issue/${offer.ticket}/worklog`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...jiraAuth(c) },
-      body: JSON.stringify({
-        timeSpentSeconds: seconds,
-        started: jiraStarted(now - seconds * 1000),
-        comment: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Worked time counted by Pigment: time in sessions, pauses over 15 minutes left out.' }] }] },
-      }),
-    })
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    const link = await findJira($, c)
+    if (!link) throw new Error('no Jira')
+    if (link.kind === 'mcp') {
+      mcpJson(await $.mcp.call(link.server, 'addWorklogToJiraIssue', {
+        cloudId: link.cloudId, issueIdOrKey: offer.ticket, timeSpent: timeSpentText(seconds),
+        started: jiraStarted(now - seconds * 1000), commentBody: note,
+      }))
+    } else {
+      const r = await $.http.fetch(`${jiraBase(c)}/rest/api/3/issue/${offer.ticket}/worklog`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json', ...jiraAuth(c) },
+        body: JSON.stringify({
+          timeSpentSeconds: seconds,
+          started: jiraStarted(now - seconds * 1000),
+          comment: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: note }] }] },
+        }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    }
   } catch {
     await update($, work, x => ({ ...x, logOffer: x.logOffer && { ...x.logOffer, isBusy: false } }))
-    $.ui.toast(`I couldn't log the time on ${offer.ticket} in Jira. Nothing was logged; check the Jira settings and try again.`)
+    $.ui.toast(`I couldn't log the time on ${offer.ticket} in Jira. Nothing was logged; try again in a moment.`)
     return
   }
   const key = `logged:${c.root}:${offer.ticket}`
@@ -283,24 +369,32 @@ async function getJson($: EngineInterface, url: string, headers: Record<string, 
 
 type JiraSprint = { id: number; name: string; startDate?: string; endDate?: string; issues: SprintIssue[] }
 
-async function sprintIssues($: EngineInterface, c: Ctx, id: number): Promise<SprintIssue[]> {
-  const fields = 'summary,status,resolutiondate,timeoriginalestimate'
-  const page = (await getJson($, `${jiraBase(c)}/rest/agile/1.0/sprint/${id}/issue?fields=${fields}&expand=changelog&maxResults=200`, jiraAuth(c))) as { issues?: JiraIssue[] }
-  return (page.issues ?? []).map(sprintIssue)
+const SPRINT_FIELDS = ['summary', 'status', 'resolutiondate', 'timeoriginalestimate', 'statuscategorychangedate', 'customfield_10020']
+
+async function sprintIssues($: EngineInterface, c: Ctx, link: JiraLink, id: number): Promise<SprintIssue[]> {
+  if (link.kind === 'rest') {
+    const fields = 'summary,status,resolutiondate,timeoriginalestimate'
+    const page = (await getJson($, `${jiraBase(c)}/rest/agile/1.0/sprint/${id}/issue?fields=${fields}&expand=changelog&maxResults=200`, jiraAuth(c))) as { issues?: JiraIssue[] }
+    return (page.issues ?? []).map(sprintIssue)
+  }
+  return (await jiraSearch($, c, link, `sprint = ${id}`, SPRINT_FIELDS)).map(sprintIssue)
 }
 
-/** The open sprint's tickets from Jira, or null when there is none or Jira is not set up. */
-async function jiraSprint($: EngineInterface, c: Ctx): Promise<JiraSprint | null> {
-  const o = c.o
-  if (!c.hasJira) return null
-  const site = `https://${String(c.jiraSite).replace(/^https?:\/\//, '').replace(/\/+$/, '')}`
-  const auth = { authorization: 'Basic ' + btoa(`${o.jiraEmail}:${o.jiraToken}`) }
-  const boards = (await getJson($, `${site}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(c.jiraProject)}`, auth)) as { values?: { id: number }[] }
+/** The open sprint's tickets from Jira, or null when there is none or Jira can't be reached. */
+async function jiraSprint($: EngineInterface, c: Ctx, link: JiraLink): Promise<JiraSprint | null> {
+  if (link.kind === 'mcp') {
+    const issues = await jiraSearch($, c, link, `project = "${link.project}" AND sprint in openSprints()`, SPRINT_FIELDS)
+    const s = openSprintFrom(issues)
+    return s ? { ...s, issues: issues.map(sprintIssue) } : null
+  }
+  const site = jiraBase(c)
+  const auth = jiraAuth(c)
+  const boards = (await getJson($, `${site}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(link.project)}`, auth)) as { values?: { id: number }[] }
   for (const b of boards.values ?? []) {
     const sprints = (await getJson($, `${site}/rest/agile/1.0/board/${b.id}/sprint?state=active`, auth).catch(() => ({}))) as { values?: { id: number; name: string; startDate?: string; endDate?: string }[] }
     const s = sprints.values?.[0]
     if (!s) continue
-    return { id: s.id, name: s.name, startDate: s.startDate, endDate: s.endDate, issues: await sprintIssues($, c, s.id) }
+    return { id: s.id, name: s.name, startDate: s.startDate, endDate: s.endDate, issues: await sprintIssues($, c, link, s.id) }
   }
   return null
 }
@@ -316,8 +410,12 @@ async function doRefresh($: EngineInterface, c: Ctx) {
   const now = await $.clock.now()
   let note: string | undefined
   let js: JiraSprint | null = null
-  try { js = await jiraSprint($, c) } catch { note = "I couldn't reach Jira just now. Showing the last two weeks instead." }
-  if (c.hasJira && !js && !note) note = "I can't see an open sprint yet. Costs are still counted by task."
+  const link = await findJira($, c).catch(() => null)
+  try { js = link?.project ? await jiraSprint($, c, link) : null } catch (err) {
+    note = `I couldn't read the sprint from Jira just now (${String((err as Error)?.message ?? err).slice(0, 120)}). Showing the last two weeks instead.`
+  }
+  if (!link && c.jiraWhy && !note) note = c.jiraWhy
+  if (link?.project && !js && !note) note = "I can't see an open sprint yet. Costs are still counted by task."
 
   let costs: TaskCost[]
   let live: LiveSession[]
@@ -372,12 +470,12 @@ async function doRefresh($: EngineInterface, c: Ctx) {
   }
 
   // A sprint that was open last time and isn't now has ended: write its summary once.
-  if (c.hasJira && !note) {
+  if (link?.project && !note) {
     const seenKey = `sprintSeen:${c.root}`
     const seen = (await $.store.get(seenKey)) as { id: number; name: string; startDate?: string; endDate?: string } | undefined
     if (seen && seen.id !== js?.id && !(await $.store.get(`summarized:${c.root}:${seen.id}`))) {
       try {
-        const ended = sprintRows(costs, await sprintIssues($, c, seen.id), now)
+        const ended = sprintRows(costs, await sprintIssues($, c, link, seen.id), now)
         const path = await writeSummary($, c, seen.name, ended, seen, true)
         await $.store.set(`summarized:${c.root}:${seen.id}`, true)
         $.ui.toast(`${seen.name} has ended. Its summary is in ${path}.`)
@@ -417,6 +515,9 @@ export const register: Register = (on, options) => {
     status: 'unchosen',
     jiraSite: '',
     jiraProject: '',
+    jira: null,
+    jiraLookedAt: -Infinity,
+    jiraWhy: '',
     lastStatusCheck: 0,
     title: '',
   }
