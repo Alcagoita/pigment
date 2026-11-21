@@ -117,7 +117,8 @@ test('The sprint: by task and working now, on this computer', { options: { role:
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface })
     expect(await ui.find({ type: 'Text', text: /The last two weeks/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /^\$3\.00 · KAN-88$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^KAN-88$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^\$3\.00$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /1 session working now/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^You · just now$/ })).toBeTruthy()
     await ui.unmount()
@@ -269,10 +270,12 @@ test('The sprint with Jira: In development with time, and Worth a look', {
     expect(await ui.find({ type: 'Text', text: /^Sprint 22 so far$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^KAN-045 has used 5h of its 6h\.$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^In development$/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /^!  KAN-045 · 5h of 6h$/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /^   Invite link$/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /^   KAN-96 · 2h$/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /KAN-10 · not started/ })).toBeFalsy()
+    expect(await ui.find({ type: 'Text', text: /^KAN-045$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^5h of 6h$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^Invite link/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^KAN-96$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^2h$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^not started$/ })).toBeFalsy()  // KAN-10 is still to do, so it's not in development
     expect(await ui.find({ type: 'Text', text: /^Your session on KAN-045 has been quiet for 1h 20m\.$/ })).toBeTruthy()
     await ui.unmount()
   }
@@ -362,11 +365,11 @@ test('long lists show three rows, then Show more', { options: { role: 'manager' 
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'pigment', args: '' } as never)
   const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'desktop' })
-  expect(await ui.find({ type: 'Text', text: /^\$1\.00 · KAN-1/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /^\$5\.00 · KAN-5/ })).toBeFalsy()
+  expect(await ui.find({ type: 'Text', text: /^KAN-1$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^\$5\.00$/ })).toBeFalsy()  // By task shows three
   expect(await ui.find({ type: 'Button', key: 'fold-tasks' })).toBeTruthy()
   await ui.press({ key: 'fold-tasks' })
-  expect(await ui.find({ type: 'Text', text: /^\$5\.00 · KAN-5/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^\$5\.00$/ })).toBeTruthy()
   await ui.unmount()
 })
 
