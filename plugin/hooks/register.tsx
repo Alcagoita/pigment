@@ -56,6 +56,8 @@ type Ctx = {
   /** How Jira is reached: the settings' own login, the Atlassian connector already signed in, or not at all. */
   jira: JiraLink | null
   jiraLookedAt: number
+  /** Why Jira isn't there, in a sentence for the pane; empty when it is, or when nothing was looked for yet. */
+  jiraWhy: string
   lastStatusCheck: number
   refreshing?: Promise<void>
   /** The pane's title as last set, so it's set again only when the sprint changes. */
@@ -83,12 +85,23 @@ async function findJira($: EngineInterface, c: Ctx): Promise<JiraLink | null> {
   if (now - c.jiraLookedAt < 5 * 60_000) return null
   c.jiraLookedAt = now
   const usage = await $.session.usage({ breakdown: 'summary' }).catch(() => null)
-  const server = jiraServerFrom(usage?.context.breakdown?.mcpTools ?? [])
-  if (!server) return null
+  const tools = usage?.context.breakdown?.mcpTools
+  const server = jiraServerFrom(tools ?? [])
+  if (!server) {
+    c.jiraWhy = tools ? "I don't see a Jira connection in this session." : "I couldn't check this session's connections for Jira."
+    return null
+  }
   const w = await read($, work)
   const project = c.jiraProject || projectFrom(w.ticket) || ((await $.store.get(`jiraProject:${c.root}`)) as string | undefined)
-  if (!project) return null
-  const sites = (await $.mcp.call(server, 'getAccessibleAtlassianResources').then(mcpJson).catch(() => [])) as { id: string; url?: string }[]
+  if (!project) {
+    c.jiraWhy = "Jira is connected, but this branch isn't named after a ticket, so I don't know the project yet."
+    return null
+  }
+  let sites: { id: string; url?: string }[] = []
+  try { sites = (await $.mcp.call(server, 'getAccessibleAtlassianResources').then(mcpJson)) as typeof sites } catch (err) {
+    c.jiraWhy = `I couldn't use the Jira connection (${server}): ${String((err as Error)?.message ?? err).slice(0, 120)}`
+    return null
+  }
   const wanted = c.jiraSite.replace(/^https?:\/\//, '').replace(/\/+$/, '')
   const order = wanted ? [...sites].sort((a, b) => Number((b.url ?? '').includes(wanted)) - Number((a.url ?? '').includes(wanted))) : sites
   for (const site of order) {
@@ -98,8 +111,10 @@ async function findJira($: EngineInterface, c: Ctx): Promise<JiraLink | null> {
     if (!ok) continue
     await $.store.set(`jiraProject:${c.root}`, project)
     c.jira = { kind: 'mcp', server, cloudId: site.id, project }
+    c.jiraWhy = ''
     return c.jira
   }
+  c.jiraWhy = `Jira is connected, but none of its ${sites.length} ${sites.length === 1 ? 'site knows' : 'sites know'} the project ${project}.`
   return null
 }
 
@@ -397,6 +412,7 @@ async function doRefresh($: EngineInterface, c: Ctx) {
   let js: JiraSprint | null = null
   const link = await findJira($, c).catch(() => null)
   try { js = link?.project ? await jiraSprint($, c, link) : null } catch { note = "I couldn't reach Jira just now. Showing the last two weeks instead." }
+  if (!link && c.jiraWhy && !note) note = c.jiraWhy
   if (link?.project && !js && !note) note = "I can't see an open sprint yet. Costs are still counted by task."
 
   let costs: TaskCost[]
@@ -499,6 +515,7 @@ export const register: Register = (on, options) => {
     jiraProject: '',
     jira: null,
     jiraLookedAt: -Infinity,
+    jiraWhy: '',
     lastStatusCheck: 0,
     title: '',
   }
