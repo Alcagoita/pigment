@@ -122,6 +122,10 @@ Pigment leads with tasks and the sprint, not with people. It's there to see how 
 - `claude plugin validate plugin`
 - `server/setup.sh --project <folder> --dry-run` — what the server setup would do
 
+## Author
+
+**Olegário Nascimento**, Tech Lead and Engineering Manager, building software since 2012. Pigment is the optional companion to [Brush Frame](https://github.com/Alcagoita/brush-frame), a human-led way to build software with AI by the same author, and is used to track the AI work behind [Brush](https://brushaway.app).
+
 ## Licence
 
 CC0 1.0 — public domain. Use and change it freely.
