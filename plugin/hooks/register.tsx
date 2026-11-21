@@ -596,12 +596,13 @@ export const register: Register = (on, options) => {
       Raster?: (p: { key: string; columns: number; rows: number; cells: string }) => JSX.Element
       Svg?: (p: { source: string; alt: string; height?: number; width?: number }) => JSX.Element
     }
-    const who = role === 'manager' ? 'Manager' : 'Developer'
     const art = e.surface === 'terminal'
       ? (Raster ? <Raster key="figure" {...figureCells(role)} /> : null)
       : (Svg ? <Svg source={figureSvg(role, 3)} alt={role === 'manager' ? 'A little orange block figure in a black hat, holding a magnifying glass' : 'A little orange block figure behind a laptop'} /> : null)
     // ── Building blocks: cards, a label with its figure on the right, a quiet note ──
     const AMBER = '#e8a86a'
+    /** The drawing's border: amber at 55% over the pane. */
+    const AMBER_SOFT = '#8c6946'
     const card = (children: JSX.Element | (JSX.Element | null | false | undefined)[], color: string = 'subtle') => (
       <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={2} paddingY={1} gap={1}>{children}</Box>
     )
@@ -611,7 +612,7 @@ export const register: Register = (on, options) => {
     )
     const divider = e.surface === 'terminal' || !Svg
       ? <Text dimColor>{'─'.repeat(Math.max(10, Math.min(60, (e.viewport?.columns ?? 40) - 4)))}</Text>
-      : <Svg source={'<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1" viewBox="0 0 2000 1" preserveAspectRatio="none"><rect width="2000" height="1" fill="#8a857c" fill-opacity=".35"/></svg>'} alt="" height={1} />
+      : <Svg source={'<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1" viewBox="0 0 2000 1" preserveAspectRatio="none"><rect width="2000" height="1" fill="#8a857c" fill-opacity=".6"/></svg>'} alt="A dividing line" height={1} />
     const stack = (parts: (JSX.Element | null | false | undefined)[]) => {
       const shown = parts.filter(Boolean) as JSX.Element[]
       return <Box flexDirection="column" gap={1}>{shown.flatMap((x, i) => (i === 0 ? [x] : [divider, x]))}</Box>
@@ -636,15 +637,14 @@ export const register: Register = (on, options) => {
       </Box>
     )
     const heading = (text: string) => <Text dimColor weight="medium">{text}</Text>
-    const header = (
+    /** As drawn: the figure, then one line, the view's own title. */
+    const headerFor = (title: string) => (
       <Box flexDirection="row" gap={2} alignItems="center">
         {art}
-        <Box flexDirection="column">
-          <Text size="heading" weight="semibold">{who}</Text>
-          <Text dimColor>{role === 'manager' ? 'Watching over the sprint' : 'At work on the tasks'}</Text>
-        </Box>
+        <Text size="heading" weight="semibold">{title}</Text>
       </Box>
     )
+    const header = headerFor('Your work')
     const host = (w0.serverUrl ?? '').replace(/^https?:\/\//, '')
     const setCard = async (storageCard: Work['storageCard']) => {
       // "Not now" holds until something changes (the key arrives, or the storage choice changes).
@@ -719,7 +719,7 @@ export const register: Register = (on, options) => {
         <Button key="optimize" variant="primary" label={label} onPress={w0.isBusy ? () => undefined : optimize} />
         <Button key="snooze" label="Not now" onPress={() => update($, work, x => ({ ...x, snoozed: signalsFor({ ...x, contextPercent: w0.contextPercent }), snoozedAt: w0.contextPercent ?? 0 }))} />
       </Box>,
-    ], AMBER) : null
+    ], AMBER_SOFT) : null
     // Otherwise always there: a fresh start whenever the person wants one.
     const freshButton = w0.isMeasured && !showCard ? (
       <Box flexDirection="column" alignItems="stretch" gap={1}>
@@ -769,17 +769,14 @@ export const register: Register = (on, options) => {
       const where = s.where === 'team' ? 'the team server' : s.where
       return (
         <Box flexDirection="column" gap={1}>
-          {header}
+          {headerFor(s.name ?? 'The sprint')}
+          {divider}
           {storageCard}
-          {freshCard}
           {stack([
             teamCard,
-            section([
-              figure(title, usd(s.total), `${s.tasks.length} ${s.tasks.length === 1 ? 'task' : 'tasks'}, counted on ${where}`),
-              s.note ? <Text dimColor size="footnote">{s.note}</Text> : null,
-              w0.isMeasured ? <Text dimColor size="footnote">This session: {usd(w0.sessionUsd)}{conversation ? `, ${conversation}` : ''}</Text> : null,
-            ]),
-            s.summary ? card([
+            <Box flexDirection="column" gap={1}>
+            {figure(title, usd(s.total))}
+            {s.summary ? card([
               <Text weight="semibold">{s.summary.hasEnded ? `${s.summary.name} has ended` : `${s.summary.name} so far`}</Text>,
               <Text tabular>{usd(s.summary.usd)} · {s.summary.prompts} prompts · {duration(s.summary.activeMs)} worked</Text>,
               <Text dimColor size="footnote">Saved to {s.summary.path}</Text>,
@@ -790,29 +787,29 @@ export const register: Register = (on, options) => {
                 }} />
                 <Button key="summary-close" label="Close" onPress={() => update($, sprint, x => (x ? { ...x, summary: undefined } : x))} />
               </Box>,
-            ]) : null,
-            (look || quiet.length > 0) ? card([
-              <Text color="warning" weight="semibold">Worth a look</Text>,
+            ]) : null}
+            {(look || quiet.length > 0) ? card([
+              <Text color={AMBER} weight="semibold">Worth a look</Text>,
               look ? <Text>{look}</Text> : null,
               quiet.length > 0 ? fold('quiet', quiet.map(q => <Text>{q}</Text>)) : null,
               quiet.length > 0 ? <Text dimColor size="footnote">A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text> : null,
-            ], 'warning') : null,
-            section([
+            ], AMBER_SOFT) : null}
+            {section([
               heading(s.source === 'jira' ? 'In development' : 'Worked on lately'),
               doing.length === 0 ? <Text dimColor>Nothing in development right now.</Text> : null,
               doing.length > 0 ? fold('doing', doing.map(t => {
                 const time = timeFor(t, now)
                 const bar = t.estimateMs && time
-                  ? <Progress label={`${t.ticket} time`} value={Math.min(time.elapsedMs / t.estimateMs, 1)} valueText={timeText(t, now)} color={time.look ? 'warning' : 'subtle'} />
+                  ? <Progress label={`${t.ticket} time`} value={Math.min(time.elapsedMs / t.estimateMs, 1)} valueText={timeText(t, now)} color={time.look ? AMBER : 'subtle'} />
                   : null
                 return item(t.ticket, timeText(t, now) || 'not started', { note: t.summary, isMono: true, strong: !!time?.look, bar })
               })) : null,
-            ]),
+            ])}
+            </Box>,
             s.tasks.length > 0 ? section([
               heading('By task'),
               fold('tasks', s.tasks.map(t => {
-                const time = timeText(t, now)
-                return item(t.ticket, usd(t.usd), { note: [t.summary, time].filter(Boolean).join(' · ') || undefined, isMono: true })
+                return item(t.ticket, usd(t.usd), { isMono: true })
               })),
             ]) : null,
             s.live.length > 0 ? section([
@@ -822,6 +819,8 @@ export const register: Register = (on, options) => {
               }))),
             ]) : null,
           ])}
+          {divider}
+          {freshCard}
           {freshButton}
           {s.tasks.length > 0 && (
             <Box flexDirection="row">
@@ -831,7 +830,12 @@ export const register: Register = (on, options) => {
               }} />
             </Box>
           )}
-          {footnotes(["Time is worked time: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.", ESTIMATE])}
+          {footnotes([
+            `${s.tasks.length} ${s.tasks.length === 1 ? 'task' : 'tasks'}, counted on ${where}.${s.note ? ` ${s.note}` : ''}`,
+            ...(w0.isMeasured ? [`This session: ${usd(w0.sessionUsd)}${conversation ? `, ${conversation}` : ''}`] : []),
+            "Time is worked time: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.",
+            ESTIMATE,
+          ])}
         </Box>
       )
     }
@@ -848,6 +852,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column" gap={1}>
         {header}
+        {divider}
         {storageCard}
         {w.logOffer && card([
           <Text weight="semibold">{w.logOffer.ticket} is in {w.logOffer.status}</Text>,
@@ -858,7 +863,7 @@ export const register: Register = (on, options) => {
               onPress={() => { const o = w.logOffer; return o && !o.isBusy ? logWork($, c, o) : undefined }} />
             <Button key="log-later" label="Not now" onPress={() => update($, work, x => ({ ...x, logOffer: undefined }))} />
           </Box>,
-        ], AMBER)}
+        ], AMBER_SOFT)}
         {stack([
           figure('This prompt', last ? usd(last.usd) : '—', last ? `${tokens(last.output)} written · ${tokens(last.cacheRead)} read from memory` : null),
           figure(`This task · ${w.ticket}`, usd(w.taskUsd), w.ticket === NO_TICKET ? "This branch isn't named after a ticket, so I'm keeping it apart." : null),

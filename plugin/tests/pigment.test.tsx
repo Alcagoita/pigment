@@ -433,8 +433,8 @@ test('each view opens with its figure and name', { options: { role: 'manager' } 
   await $.command.run({ command: 'pigment', args: '' } as never)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface })
-    expect(await ui.find({ type: 'Text', text: /^Manager$/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /^Watching over the sprint$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^The sprint$/ })).toBeTruthy()   // the figure, then the view's title
+    expect(await ui.find({ type: surface === 'desktop' ? 'Svg' : 'Raster' } as never)).toBeTruthy()
     await ui.unmount()
   }
 })
