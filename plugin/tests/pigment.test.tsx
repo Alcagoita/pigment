@@ -675,6 +675,8 @@ test('connector helpers: find the server, read the reply, the sprint and the pro
   expect(jiraServerFrom([{ name: 'mcp__a__fetch', serverName: 'a' }])).toBeUndefined()
   expect(mcpJson({ content: [{ type: 'text', text: '{"a":1}' }] })).toEqual({ a: 1 })
   expect(() => mcpJson({ isError: true, content: [{ type: 'text', text: 'no' }] })).toThrow()
+  expect(mcpJson({ content: [{ type: 'text', text: '{"a":' }, { type: 'text', text: '1}' }] })).toEqual({ a: 1 })   // a long reply in pieces
+  expect(mcpJson({ content: [{ type: 'resource', resource: { text: '{"b":2}' } }] })).toEqual({ b: 2 })
   expect(issuesFrom({ issues: { nodes: [{ key: 'K-1' }], pageInfo: { hasNextPage: true, endCursor: 'c2' } } })).toEqual({ issues: [{ key: 'K-1' }], next: 'c2' })
   expect(issuesFrom({ issues: [{ key: 'K-2' }] }).issues[0]?.key).toBe('K-2')
   expect(openSprintFrom([{ key: 'K-1', fields: { customfield_10020: [{ id: 3, name: 'Sprint 21', state: 'closed' }, { id: 4, name: 'Sprint 22', state: 'active' }] } }])?.name).toBe('Sprint 22')

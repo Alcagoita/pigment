@@ -126,9 +126,9 @@ async function jiraSearch($: EngineInterface, c: Ctx, link: JiraLink, jql: strin
   }
   const out: JiraIssue[] = []
   let next: string | undefined
-  for (let n = 0; n < 10; n++) {
+  for (let n = 0; n < 20; n++) {
     const page = issuesFrom(mcpJson(await $.mcp.call(link.server, 'searchJiraIssuesUsingJql', {
-      cloudId: link.cloudId, jql, fields, maxResults: 100, ...(next ? { nextPageToken: next } : {}),
+      cloudId: link.cloudId, jql, fields, maxResults: 25, ...(next ? { nextPageToken: next } : {}),
     })))
     out.push(...page.issues)
     if (!page.next) break
@@ -411,7 +411,9 @@ async function doRefresh($: EngineInterface, c: Ctx) {
   let note: string | undefined
   let js: JiraSprint | null = null
   const link = await findJira($, c).catch(() => null)
-  try { js = link?.project ? await jiraSprint($, c, link) : null } catch { note = "I couldn't reach Jira just now. Showing the last two weeks instead." }
+  try { js = link?.project ? await jiraSprint($, c, link) : null } catch (err) {
+    note = `I couldn't read the sprint from Jira just now (${String((err as Error)?.message ?? err).slice(0, 120)}). Showing the last two weeks instead.`
+  }
   if (!link && c.jiraWhy && !note) note = c.jiraWhy
   if (link?.project && !js && !note) note = "I can't see an open sprint yet. Costs are still counted by task."
 

@@ -346,14 +346,15 @@ export function jiraServerFrom(tools: { name: string; serverName: string }[]): s
 }
 
 /** A connector result's JSON: its structured content, else its first text block that parses. */
-export function mcpJson(r: { content?: { type: string; text?: string }[]; structuredContent?: unknown; isError?: boolean }): unknown {
-  if (r.isError) throw new Error((r.content ?? []).map(b => b.text ?? '').join(' ').slice(0, 200) || 'Jira refused')
+export function mcpJson(r: { content?: { type: string; text?: string; resource?: { text?: string } }[]; structuredContent?: unknown; isError?: boolean }): unknown {
+  const texts = (r.content ?? []).map(b => b.text ?? b.resource?.text ?? '').filter(Boolean)
+  if (r.isError) throw new Error(texts.join(' ').slice(0, 200) || 'Jira refused')
   if (r.structuredContent !== undefined) return r.structuredContent
-  for (const b of r.content ?? []) {
-    if (b.type !== 'text' || !b.text) continue
-    try { return JSON.parse(b.text) as unknown } catch { /* the next block */ }
+  // One block that parses, else the blocks together (a long reply can come in pieces).
+  for (const t of [...texts, texts.join('')]) {
+    try { return JSON.parse(t) as unknown } catch { /* the next */ }
   }
-  throw new Error('No JSON in the reply')
+  throw new Error(`the reply wasn't JSON: ${(texts[0] ?? '(empty)').slice(0, 80)}`)
 }
 
 /** The issues of a search reply, in the shapes the connector has used. */
