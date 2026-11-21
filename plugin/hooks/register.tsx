@@ -615,7 +615,7 @@ export const register: Register = (on, options) => {
       : <Svg source={'<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1" viewBox="0 0 2000 1" preserveAspectRatio="none"><rect width="2000" height="1" fill="#8a857c" fill-opacity=".6"/></svg>'} alt="A dividing line" height={1} />
     const stack = (parts: (JSX.Element | null | false | undefined)[]) => {
       const shown = parts.filter(Boolean) as JSX.Element[]
-      return <Box flexDirection="column" gap={1}>{shown.flatMap((x, i) => (i === 0 ? [x] : [divider, x]))}</Box>
+      return <Box flexDirection="column" gap={2}>{shown.flatMap((x, i) => (i === 0 ? [x] : [divider, x]))}</Box>
     }
     const figure = (label: string, value: string, note?: string | null) => (
       <Box flexDirection="column">
@@ -629,16 +629,26 @@ export const register: Register = (on, options) => {
     const item = (left: string, right: string, opts: { note?: string; isMono?: boolean; strong?: boolean; bar?: JSX.Element | null } = {}) => (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={2}>
-          <Text mono={opts.isMono} size="footnote" weight={opts.strong ? 'semibold' : 'medium'} wrap="end">{left}</Text>
-          {opts.bar && <Box flexGrow={1}>{opts.bar}</Box>}
-          <Text dimColor={!opts.strong} size="footnote" weight="medium" tabular>{right}</Text>
+          <Box flexShrink={opts.bar ? 0 : 1}><Text mono={opts.isMono} size="footnote" weight={opts.strong ? 'semibold' : 'medium'} wrap="end">{left}</Text></Box>
+          {opts.bar && <Box flexGrow={1} flexDirection="row" justifyContent="flex-end">{opts.bar}</Box>}
+          <Box flexShrink={0}><Text dimColor={!opts.strong} size="footnote" weight="medium" tabular>{right}</Text></Box>
         </Box>
         {opts.note && <Text dimColor size="caption" wrap="end">{opts.note}</Text>}
       </Box>
     )
     /** The drawing's bar: a grey track, a fill in amber when the task needs a look. */
+    /** The row's time in whole hours: "3h", "5h of 6h", "under 1h". */
+    const hoursText = (t: TaskCost, at: number) => {
+      const time = timeFor(t, at)
+      if (!time) return ''
+      const h = (ms: number) => (ms < 3_600_000 ? 'under 1h' : `${Math.round(ms / 3_600_000)}h`)
+      if (!time.isOpen) return `${h(time.elapsedMs)}, done`
+      return t.estimateMs ? `${h(time.elapsedMs)} of ${h(t.estimateMs)}` : h(time.elapsedMs)
+    }
+    /** Short, so the ticket and the time keep their room. */
+    const BAR_PX = 96
     const bar = (share: number, isLook: boolean, alt: string) => {
-      const w = 1000, fill = Math.round(Math.max(0, Math.min(1, share)) * w)
+      const w = BAR_PX, fill = Math.round(Math.max(0, Math.min(1, share)) * w)
       const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="6" viewBox="0 0 ${w} 6" preserveAspectRatio="none">`
         + `<rect width="${w}" height="6" rx="3" fill="#8a857c" fill-opacity=".22"/>`
         + (fill > 0 ? `<rect width="${Math.max(fill, 6)}" height="6" rx="3" fill="${isLook ? AMBER : '#8a857c'}" fill-opacity="${isLook ? 1 : 0.75}"/>` : '')
@@ -647,7 +657,7 @@ export const register: Register = (on, options) => {
         const cells = 12, n = Math.round(Math.max(0, Math.min(1, share)) * cells)
         return <Text color={isLook ? AMBER : undefined} dimColor={!isLook}>{'━'.repeat(n)}<Text dimColor>{'─'.repeat(cells - n)}</Text></Text>
       }
-      return <Svg source={src} alt={alt} height={6} />
+      return <Svg source={src} alt={alt} width={BAR_PX} height={6} />
     }
     const heading = (text: string) => <Text dimColor weight="medium">{text}</Text>
     /** As drawn: the figure, then one line, the view's own title. */
@@ -759,7 +769,7 @@ export const register: Register = (on, options) => {
       // A small developer figure for each person working right now; they leave when they stop.
       const team = teamNow(s.live, c.sessionId)
       const teamCard = section([
-        heading(`Active developers in this project${team.length > 0 ? ` · ${team.length}` : ''}`),
+        heading('The team now'),
         team.length === 0
           ? <Text dimColor>Nobody else is working right now.</Text>
           : (
@@ -781,7 +791,7 @@ export const register: Register = (on, options) => {
       const quiet = (s.quiet ?? []).map(q => `${q.person === 'me' ? 'Your' : `${q.person}'s`} session on ${q.ticket} has been quiet for ${duration(now - q.lastAt)}.`)
       const where = s.where === 'team' ? 'the team server' : s.where
       return (
-        <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column" gap={2}>
           {headerFor(s.name ?? 'The sprint')}
           {divider}
           {storageCard}
@@ -816,7 +826,7 @@ export const register: Register = (on, options) => {
                 return doing.map(t => {
                   const time = timeFor(t, now)
                   const share = time ? time.elapsedMs / (t.estimateMs || longest) : 0
-                  const text = timeText(t, now) || 'not started'
+                  const text = hoursText(t, now) || 'not started'
                   return item(t.ticket, text, { note: t.summary, isMono: true, strong: !!time?.look, bar: bar(share, !!time?.look, `${t.ticket}: ${text}`) })
                 })
               })()) : null,
@@ -866,7 +876,7 @@ export const register: Register = (on, options) => {
     const sessionNote = [`${promptCount} ${promptCount === 1 ? 'prompt' : 'prompts'}`, w.hasUnknownPrice ? 'one model priced as another' : '']
       .filter(Boolean).join(', ')
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column" gap={2}>
         {header}
         {divider}
         {storageCard}

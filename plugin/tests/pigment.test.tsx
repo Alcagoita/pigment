@@ -464,7 +464,7 @@ test('under the manager, one developer figure per person working now', { options
     expect(await ui.find({ type: 'Text', text: /^Ana$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^Rui$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^Bia$/ })).toBeFalsy()  // stopped working a while ago
-    expect(await ui.find({ type: 'Text', text: /^Active developers in this project · 2$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^The team now$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^Leo$/ })).toBeFalsy()  // closed the session
     await ui.unmount()
   }
