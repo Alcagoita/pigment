@@ -4,7 +4,7 @@ import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
   activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, cleanKey, keyNameFrom, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, parseConfig, parseLines,
-  isLogStatus, jiraStarted, MIN_LOG_MS, prune, reasonText, signalsFor, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
+  isLogStatus, jiraStarted, MIN_LOG_MS, prune, climbRatio, signalsFor, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import { figureCells, figureSvg } from './figures'
 import type { JiraIssue, Line, ProjectConfig, SprintIssue, StorageStatus } from './lib'
@@ -565,7 +565,6 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Progress } = $.ui.resolve(e)
     const rows = e.viewport?.rows ?? 30
-    const estimate = <Text dimColor>An estimate at list price. On a plan, it's what it would cost, not what you pay.</Text>
     const expanded = await read($, open)
     /** Rows one per item; past the first three, a toggle shows the rest. */
     const fold = (key: string, rows: JSX.Element[]) => {
@@ -595,21 +594,82 @@ export const register: Register = (on, options) => {
     const promptCount = Math.max(turns, stored.prompts.length)
     const { Raster, Svg } = $.ui.resolve(e) as unknown as {
       Raster?: (p: { key: string; columns: number; rows: number; cells: string }) => JSX.Element
-      Svg?: (p: { source: string; alt: string }) => JSX.Element
+      Svg?: (p: { source: string; alt: string; height?: number; width?: number }) => JSX.Element
     }
-    const who = role === 'manager' ? 'Manager' : 'Developer'
     const art = e.surface === 'terminal'
       ? (Raster ? <Raster key="figure" {...figureCells(role)} /> : null)
-      : (Svg ? <Svg source={figureSvg(role)} alt={role === 'manager' ? 'A little orange block figure in a black hat, holding a magnifying glass' : 'A little orange block figure behind a laptop'} /> : null)
-    const header = (
-      <Box flexDirection="row" gap={2} alignItems="center">
-        {art}
-        <Box flexDirection="column">
-          <Text bold>{who}</Text>
-          <Text dimColor>{role === 'manager' ? 'Watching over the sprint' : 'At work on the tasks'}</Text>
+      : (Svg ? <Svg source={figureSvg(role, 3)} alt={role === 'manager' ? 'A little orange block figure in a black hat, holding a magnifying glass' : 'A little orange block figure behind a laptop'} /> : null)
+    // ── Building blocks: cards, a label with its figure on the right, a quiet note ──
+    const AMBER = '#e8a86a'
+    /** The drawing's border: amber at 55% over the pane. */
+    const AMBER_SOFT = '#8c6946'
+    const card = (children: JSX.Element | (JSX.Element | null | false | undefined)[], color: string = 'subtle') => (
+      <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={2} paddingY={1} gap={1}>{children}</Box>
+    )
+    /** A section of the one surface: no border, the sections split by a thin line, as the drawing has it. */
+    const section = (children: (JSX.Element | null | false | undefined)[]) => (
+      <Box flexDirection="column" gap={1}>{children}</Box>
+    )
+    const divider = e.surface === 'terminal' || !Svg
+      ? <Text dimColor>{'─'.repeat(Math.max(10, Math.min(60, (e.viewport?.columns ?? 40) - 4)))}</Text>
+      : <Svg source={'<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1" viewBox="0 0 2000 1" preserveAspectRatio="none"><rect width="2000" height="1" fill="#8a857c" fill-opacity=".6"/></svg>'} alt="A dividing line" height={1} />
+    const stack = (parts: (JSX.Element | null | false | undefined)[]) => {
+      const shown = parts.filter(Boolean) as JSX.Element[]
+      return <Box flexDirection="column" gap={2}>{shown.flatMap((x, i) => (i === 0 ? [x] : [divider, x]))}</Box>
+    }
+    const figure = (label: string, value: string, note?: string | null) => (
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" gap={1}>
+          <Text dimColor>{label}</Text>
+          <Text size="heading" weight="semibold" tabular>{value}</Text>
         </Box>
+        {note && <Text dimColor size="footnote">{note}</Text>}
       </Box>
     )
+    const item = (left: string, right: string, opts: { note?: string; isMono?: boolean; strong?: boolean; bar?: JSX.Element | null } = {}) => (
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={3}>
+          <Box flexShrink={opts.bar ? 0 : 1}><Text mono={opts.isMono} size="footnote" weight={opts.strong ? 'semibold' : 'medium'} wrap="end">{left}</Text></Box>
+          {opts.bar && <Box flexGrow={1} flexShrink={1} minWidth={0}>{opts.bar}</Box>}
+          <Box flexShrink={0}><Text dimColor={!opts.strong} size="footnote" weight="medium" tabular>{right}</Text></Box>
+        </Box>
+        {opts.note && <Text dimColor size="caption" wrap="end">{opts.note}</Text>}
+      </Box>
+    )
+    /** The drawing's bar: a grey track, a fill in amber when the task needs a look. */
+    /** The row's time in whole hours: "3h", "5h of 6h", "under 1h". */
+    const hoursText = (t: TaskCost, at: number) => {
+      const time = timeFor(t, at)
+      if (!time) return ''
+      const h = (ms: number) => (ms < 3_600_000 ? 'under 1h' : `${Math.round(ms / 3_600_000)}h`)
+      if (!time.isOpen) return `${h(time.elapsedMs)}, done`
+      return t.estimateMs ? `${h(time.elapsedMs)} of ${h(t.estimateMs)}` : h(time.elapsedMs)
+    }
+    /** The drawing's bar: a grey track and a fill, stretched to the room it's given, its round ends kept. */
+    const bar = (share: number, fill: string | null, alt: string, thick = 6) => {
+      const f = Math.max(0, Math.min(1, share))
+      if (e.surface === 'terminal' || !Svg) {
+        const cells = 16, n = Math.round(f * cells)
+        return <Text color={fill ?? undefined} dimColor={!fill}>{'━'.repeat(n)}<Text dimColor>{'─'.repeat(cells - n)}</Text></Text>
+      }
+      const W = 2000, x0 = 20, x1 = W - 20, y = thick / 2
+      const line = (to: number, color: string, opacity: number) =>
+        `<line x1="${x0}" y1="${y}" x2="${to}" y2="${y}" stroke="${color}" stroke-opacity="${opacity}" stroke-width="${thick}" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`
+      const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${thick}" viewBox="0 0 ${W} ${thick}" preserveAspectRatio="none">`
+        + line(x1, '#8a857c', 0.22)
+        + (f > 0 ? line(x0 + Math.max(f * (x1 - x0), 1), fill ?? '#8a857c', fill ? 1 : 0.75) : '')
+        + '</svg>'
+      return <Svg source={src} alt={alt} height={thick} />
+    }
+    const heading = (text: string) => <Text dimColor weight="medium">{text}</Text>
+    /** As drawn: the figure, then one line, the view's own title. */
+    const headerFor = (title: string) => (
+      <Box flexDirection="row" gap={2} alignItems="center">
+        {art}
+        <Text size="heading" weight="semibold">{title}</Text>
+      </Box>
+    )
+    const header = headerFor('Your work')
     const host = (w0.serverUrl ?? '').replace(/^https?:\/\//, '')
     const setCard = async (storageCard: Work['storageCard']) => {
       // "Not now" holds until something changes (the key arrives, or the storage choice changes).
@@ -667,7 +727,6 @@ export const register: Register = (on, options) => {
 
     const signals = signalsFor(w0)
     const grewSince = w0.snoozedAt !== undefined && (w0.contextPercent ?? 0) >= w0.snoozedAt + 10
-    const showCard = signals.length > 0 && (grewSince || signals.some(x => !w0.snoozed.includes(x)))
     // The summary takes longer than a press may hold, so the press only starts it.
     const optimize = () => {
       if (w0.isBusy) return
@@ -675,146 +734,139 @@ export const register: Register = (on, options) => {
       $.ui.toast('Writing a short summary of where we are…')
       $.clock.after(0, () => void startFresh($, c, e.surface))
     }
-
-    const freshCard = w0.isMeasured && showCard ? (
-      <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
-            <Text>{reasonText(signals, w0.prompts)}</Text>
-            <Text dimColor>I can write a short summary for you to paste into a new session, and you carry on from there. Nothing is lost.</Text>
-            <Box gap={1}>
-              <Button key="optimize" variant="primary" label={w0.isBusy ? 'Writing…' : 'Optimize now'} onPress={w0.isBusy ? () => undefined : optimize} />
-              <Button key="snooze" label="Not now" onPress={() => update($, work, x => ({ ...x, snoozed: signalsFor({ ...x, contextPercent: w0.contextPercent }), snoozedAt: w0.contextPercent ?? 0 }))} />
-            </Box>
-          </Box>
-    ) : null
-    // Always there, quietly: a fresh start whenever the person wants one, not only when I suggest it.
-    const freshLink = w0.isMeasured && !showCard ? (
-      <Box flexDirection="column">
-        <Button key="optimize-anyway" plain label={w0.isBusy ? 'Writing a summary…' : 'Start fresh with a summary'}
-          onPress={w0.isBusy ? () => undefined : optimize} />
-        <Text dimColor>I write where we are and copy it. Open a new session and paste: it carries on from here.{w0.handoffPath ? ` Last one: ${w0.handoffPath}` : ''}</Text>
-      </Box>
-    ) : null
+    const label = w0.isBusy ? 'Writing…' : 'Optimize now'
+    // When I think it's time: why, with Optimize now and Not now.
+    // A warning only at the critical point: the conversation has grown long. Not now holds until it grows ten points more.
+    const isCritical = signals.includes('long') && (grewSince || !w0.snoozed.includes('long'))
+    const snooze = () => update($, work, x => ({ ...x, snoozed: signalsFor({ ...x, contextPercent: w0.contextPercent }), snoozedAt: w0.contextPercent ?? 0 }))
+    const climbTimes = signals.includes('climbing') ? Math.round(climbRatio(w0.prompts)) : 0
+    const sessionSection = (promptsNote: string) => w0.isMeasured ? section([
+      figure('This session', usd(w0.sessionUsd)),
+      w0.contextPercent !== undefined ? bar(w0.contextPercent / 100, AMBER, `Conversation ${Math.round(w0.contextPercent)}% full`, 8) : null,
+      <Text dimColor size="footnote">{[w0.contextPercent !== undefined ? `Conversation ${Math.round(w0.contextPercent)}% full` : '', promptsNote].filter(Boolean).join(' · ')}</Text>,
+      // Measured, not guessed: the last three prompts against the first three.
+      climbTimes >= 2 ? <Text>Each prompt now costs about {climbTimes} times what it did at the start.</Text> : null,
+      isCritical ? (
+        <Box flexDirection="column" gap={1}>
+          <Text color={AMBER} weight="semibold">This conversation has grown long. From here, answers can get less sharp.</Text>
+          <Box flexDirection="row"><Button key="snooze" plain dimColor label="Not now" onPress={snooze} /></Box>
+        </Box>
+      ) : null,
+      <Box flexDirection="column" alignItems="stretch" gap={1}>
+        <Button key={isCritical ? 'optimize' : 'optimize-anyway'} variant="primary" label={label} onPress={w0.isBusy ? () => undefined : optimize} />
+        <Box flexDirection="row" justifyContent="center">
+          <Text dimColor size="caption">A short summary to carry on in a fresh session{w0.handoffPath ? ` · last one: ${w0.handoffPath}` : ''}</Text>
+        </Box>
+      </Box>,
+    ]) : null
+    const conversation = w0.contextPercent !== undefined ? `conversation ${Math.round(w0.contextPercent)}% full` : ''
+    const footnotes = (lines: string[]) => (
+      <Box flexDirection="column" gap={1}>{lines.map(l => <Text dimColor size="caption">{l}</Text>)}</Box>
+    )
+    const ESTIMATE = "An estimate at list price. On a plan, it's what it would cost, not what you pay."
 
     // ── Manager: The sprint ──────────────────────────────────────────
     if (role === 'manager') {
       const s = await read($, sprint)
       if (!s) return <Text dimColor>Gathering the sprint…</Text>
       const now = await $.clock.now()
-      const heading = s.name ? `${s.name} so far` : 'The last two weeks'
+      const title = s.name ? `${s.name} so far` : 'The last two weeks'
       const doing = inDevelopment(s.tasks, now, s.source === 'jira')
       const look = lookText(s.tasks, now)
       // A small developer figure for each person working right now; they leave when they stop.
       const team = teamNow(s.live, c.sessionId)
-      const teamRow = (
-        <Box flexDirection="column" gap={1}>
-          <Text dimColor>Active developers in this project{team.length > 0 ? ` · ${team.length}` : ''}</Text>
-          {team.length === 0
-            ? <Text dimColor>Nobody else is working right now.</Text>
-            : (
-              <Box flexDirection="row" flexWrap="wrap" gap={2}>
-                {team.map((d, i) => (
-                  <Box flexDirection="column" alignItems="center">
-                    {e.surface === 'terminal'
-                      ? (Raster ? <Raster key={`dev-${i}`} {...figureCells('developer')} /> : null)
-                      : (Svg ? <Svg source={figureSvg('developer', 2)} alt={`${d.person}, working on ${d.ticket}`} /> : null)}
-                    <Text>{d.person === 'me' ? 'You' : d.person}</Text>
-                    <Text dimColor>{d.ticket}</Text>
+      const teamCard = section([
+        heading('The team now'),
+        team.length === 0
+          ? <Text dimColor>Nobody else is working right now.</Text>
+          : (
+            <Box flexDirection="row" flexWrap="wrap" gap={2}>
+              {team.map((d, i) => (
+                <Box flexDirection="row" gap={1} alignItems="center">
+                  {e.surface === 'terminal'
+                    ? (Raster ? <Raster key={`dev-${i}`} {...figureCells('developer')} /> : null)
+                    : (Svg ? <Svg source={figureSvg('developer', 2)} alt={`${d.person}, working on ${d.ticket}`} /> : null)}
+                  <Box flexDirection="column">
+                    <Text weight="semibold">{d.person === 'me' ? 'You' : d.person}</Text>
+                    <Text dimColor mono size="caption">{d.ticket}</Text>
                   </Box>
-                ))}
-              </Box>
-            )}
-        </Box>
-      )
+                </Box>
+              ))}
+            </Box>
+          ),
+      ])
       const quiet = (s.quiet ?? []).map(q => `${q.person === 'me' ? 'Your' : `${q.person}'s`} session on ${q.ticket} has been quiet for ${duration(now - q.lastAt)}.`)
-      const mark = (t: TaskCost) => {
-        const l = timeFor(t, now)?.look
-        return l === 'over' ? '!! ' : l === 'near' ? '!  ' : '   '
-      }
+      const where = s.where === 'team' ? 'the team server' : s.where
       return (
-        <Box flexDirection="column" gap={1}>
-          {header}
-          {teamRow}
+        <Box flexDirection="column" gap={2}>
+          {headerFor(s.name ?? 'The sprint')}
+          {divider}
           {storageCard}
-          {freshCard}
-          <Box flexDirection="column">
-            <Text dimColor>{heading}</Text>
-            <Text bold>{usd(s.total)}</Text>
-            <Text dimColor>{s.tasks.length} {s.tasks.length === 1 ? 'task' : 'tasks'}, counted on {s.where}</Text>
-            {s.note && <Text dimColor>{s.note}</Text>}
-            {w0.isMeasured && <Text dimColor>This session: {usd(w0.sessionUsd)}{w0.contextPercent !== undefined ? `, conversation ${Math.round(w0.contextPercent)}% full` : ''}</Text>}
-          </Box>
-
-          {s.summary && (
-            <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
-              <Text bold>{s.summary.hasEnded ? `${s.summary.name} has ended` : `${s.summary.name} so far`}</Text>
-              <Text>{usd(s.summary.usd)} · {s.summary.prompts} prompts · {duration(s.summary.activeMs)} worked</Text>
-              <Text dimColor>Saved to {s.summary.path}</Text>
-              <Box gap={1}>
+          {stack([
+            teamCard,
+            <Box flexDirection="column" gap={1}>
+            {figure(title, usd(s.total))}
+            {s.summary ? card([
+              <Text weight="semibold">{s.summary.hasEnded ? `${s.summary.name} has ended` : `${s.summary.name} so far`}</Text>,
+              <Text tabular>{usd(s.summary.usd)} · {s.summary.prompts} prompts · {duration(s.summary.activeMs)} worked</Text>,
+              <Text dimColor size="footnote">Saved to {s.summary.path}</Text>,
+              <Box flexDirection="row" gap={1}>
                 <Button key="summary-copy" label="Copy the summary" onPress={async () => {
                   const r = await $.ui.copy({ text: s.summary?.text ?? '', surface: e.surface })
                   $.ui.toast(r.isCopied ? 'Copied.' : `It's in ${s.summary?.path}.`)
                 }} />
                 <Button key="summary-close" label="Close" onPress={() => update($, sprint, x => (x ? { ...x, summary: undefined } : x))} />
-              </Box>
-            </Box>
-          )}
-
-          {(look || quiet.length > 0) && (
-            <Box flexDirection="column" borderStyle="round" paddingX={1}>
-              <Text bold>Worth a look</Text>
-              {look && <Text>{look}</Text>}
-              {quiet.length > 0 && fold('quiet', quiet.map(q => <Text>{q}</Text>))}
-              {quiet.length > 0 && <Text dimColor>A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text>}
-            </Box>
-          )}
-
-          <Box flexDirection="column">
-            <Text dimColor>{s.source === 'jira' ? 'In development' : 'Worked on lately'}</Text>
-            {doing.length === 0 && <Text dimColor>Nothing in development right now.</Text>}
-            {doing.length > 0 && fold('doing', doing.map(t => (
-              <Box flexDirection="column">
-                <Text bold={!!timeFor(t, now)?.look}>{mark(t)}{t.ticket} · {timeText(t, now) || 'not started'}</Text>
-                {t.summary && <Text dimColor>   {t.summary}</Text>}
-              </Box>
-            )))}
-          </Box>
-
-          <Box flexDirection="column">
-            <Text dimColor>By task</Text>
-            {s.tasks.length === 0 && <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text>}
-            {s.tasks.length > 0 && fold('tasks', s.tasks.map(t => {
-              const time = timeText(t, now)
-              return (
-                <Box flexDirection="column">
-                  <Text>{usd(t.usd)} · {t.ticket}{time ? ` · ${time}` : ''}</Text>
-                  {t.summary && <Text dimColor>{t.summary}</Text>}
-                </Box>
-              )
-            }))}
-          </Box>
-
-          <Box flexDirection="column">
-            <Text dimColor>
-              {s.live.length === 0 ? 'Nobody working right now' : `${s.live.length} ${s.live.length === 1 ? 'session' : 'sessions'} working now`}
-            </Text>
-            {s.live.length > 0 && fold('live', s.live.map(l => (
-              <Box flexDirection="column">
-                <Text>{usd(l.usd)} · {l.ticket}</Text>
-                <Text dimColor>{l.person === 'me' ? 'You' : l.person} · {ago(now - l.lastAt)}</Text>
-              </Box>
-            )))}
-          </Box>
+              </Box>,
+            ]) : null}
+            {(look || quiet.length > 0) ? card([
+              <Text color={AMBER} size="footnote" weight="semibold">Worth a look</Text>,
+              look ? <Text>{look}</Text> : null,
+              quiet.length > 0 ? fold('quiet', quiet.map(q => <Text>{q}</Text>)) : null,
+              quiet.length > 0 ? <Text dimColor size="caption">A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text> : null,
+            ], AMBER_SOFT) : null}
+            {section([
+              heading('In development'),
+              doing.length === 0 ? <Text dimColor>Nothing in development right now.</Text> : null,
+              doing.length > 0 ? fold('doing', (() => {
+                // With an estimate, the bar is the time against it; without, against the longest task here.
+                const longest = Math.max(1, ...doing.map(t => timeFor(t, now)?.elapsedMs ?? 0))
+                return doing.map(t => {
+                  const time = timeFor(t, now)
+                  const share = time ? time.elapsedMs / (t.estimateMs || longest) : 0
+                  const text = hoursText(t, now) || 'not started'
+                  return item(t.ticket, text, { note: t.summary, isMono: true, strong: !!time?.look, bar: bar(share, time?.look ? AMBER : null, `${t.ticket}: ${text}`) })
+                })
+              })()) : null,
+            ])}
+            </Box>,
+            s.tasks.length > 0 ? section([
+              heading('By task'),
+              fold('tasks', s.tasks.map(t => {
+                return item(t.ticket, usd(t.usd), { isMono: true })
+              })),
+            ]) : null,
+            s.live.length > 0 ? section([
+              heading(`${s.live.length} ${s.live.length === 1 ? 'session' : 'sessions'} working now`),
+              fold('live', s.live.map(l => item(l.ticket, usd(l.usd), {
+                note: `${l.person === 'me' ? 'You' : l.person} · ${ago(now - l.lastAt)}`, isMono: true,
+              }))),
+            ]) : null,
+          ])}
+          {divider}
+          {sessionSection(`${promptCount} ${promptCount === 1 ? 'prompt' : 'prompts'} in this session`)}
           {s.tasks.length > 0 && (
-            <Box>
+            <Box flexDirection="row">
               <Button key="summary-now" label="Write a summary now" onPress={async () => {
                 const path = await writeSummary($, c, s.name ?? 'The last two weeks', s.tasks, {}, false)
                 $.ui.toast(`Saved to ${path}.`)
               }} />
             </Box>
           )}
-          {freshLink}
-          <Text dimColor>Time is what was worked in sessions: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.</Text>
-          {estimate}
+          {footnotes([
+            `${s.tasks.length} ${s.tasks.length === 1 ? 'task' : 'tasks'}, counted on ${where}.${s.note ? ` ${s.note}` : ''}`,
+            "Time is worked time: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.",
+            ESTIMATE,
+          ])}
         </Box>
       )
     }
@@ -826,50 +878,32 @@ export const register: Register = (on, options) => {
     }
     const last = w.prompts[w.prompts.length - 1]
     const recent = [...w.prompts].reverse().slice(0, 50)
+    const sessionNote = [`${promptCount} ${promptCount === 1 ? 'prompt' : 'prompts'}`, w.hasUnknownPrice ? 'one model priced as another' : '']
+      .filter(Boolean).join(', ')
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column" gap={2}>
         {header}
+        {divider}
         {storageCard}
-        {w.logOffer && (
-          <Box flexDirection="column" borderStyle="round" paddingX={1} gap={1}>
-            <Text bold>{w.logOffer.ticket} is in {w.logOffer.status}</Text>
-            <Text>Log the {duration(w.logOffer.ms)} you worked on it in Jira?</Text>
-            <Text dimColor>Worked time is time in sessions; pauses over 15 minutes are left out.</Text>
-            <Box gap={1}>
-              <Button key="log-it" variant="primary" label={w.logOffer.isBusy ? 'Logging…' : 'Log it in Jira'}
-                onPress={() => { const o = w.logOffer; return o && !o.isBusy ? logWork($, c, o) : undefined }} />
-              <Button key="log-later" label="Not now" onPress={() => update($, work, x => ({ ...x, logOffer: undefined }))} />
-            </Box>
-          </Box>
-        )}
-        <Box flexDirection="column">
-          <Text dimColor>This prompt</Text>
-          <Text bold>{last ? usd(last.usd) : '—'}</Text>
-          {last && <Text dimColor>{tokens(last.output)} written, {tokens(last.cacheRead)} read from memory</Text>}
-        </Box>
-        <Box flexDirection="column">
-          <Text dimColor>This task · {w.ticket}</Text>
-          <Text bold>{usd(w.taskUsd)}</Text>
-          {w.ticket === NO_TICKET && <Text dimColor>This branch isn't named after a ticket, so I'm keeping it apart.</Text>}
-        </Box>
-        <Box flexDirection="column">
-          <Text dimColor>This session</Text>
-          <Text bold>{usd(w.sessionUsd)}</Text>
-          <Text dimColor>{promptCount} {promptCount === 1 ? 'prompt' : 'prompts'}{w.hasUnknownPrice ? ', one model priced as another' : ''}</Text>
-          {w.storage === 'cloud' && w.waiting > 0 && <Text dimColor>{w.waiting} waiting to reach the team server. I'll keep trying.</Text>}
-        </Box>
-
-        {w.contextPercent !== undefined && <Progress label="Conversation length" value={w.contextPercent / 100} />}
-
-        {freshCard}
-
-        <Box flexDirection="column">
-          <Text dimColor>Earlier prompts</Text>
-          {recent.length === 0 && <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text>}
-          {recent.length > 0 && fold('prompts', recent.map(p => <Text>{usd(p.usd)} · {p.label}</Text>))}
-        </Box>
-        {freshLink}
-        {estimate}
+        {w.logOffer && card([
+          <Text weight="semibold">{w.logOffer.ticket} is in {w.logOffer.status}</Text>,
+          <Text>Log the {duration(w.logOffer.ms)} you worked on it in Jira?</Text>,
+          <Text dimColor size="footnote">Worked time is time in sessions; pauses over 15 minutes are left out.</Text>,
+          <Box flexDirection="row" gap={1}>
+            <Button key="log-it" variant="primary" label={w.logOffer.isBusy ? 'Logging…' : 'Log it in Jira'}
+              onPress={() => { const o = w.logOffer; return o && !o.isBusy ? logWork($, c, o) : undefined }} />
+            <Button key="log-later" label="Not now" onPress={() => update($, work, x => ({ ...x, logOffer: undefined }))} />
+          </Box>,
+        ], AMBER_SOFT)}
+        {stack([
+          figure('This prompt', last ? usd(last.usd) : '—', last ? `${tokens(last.output)} written · ${tokens(last.cacheRead)} read from memory` : null),
+          figure(`This task · ${w.ticket}`, usd(w.taskUsd), w.ticket === NO_TICKET ? "This branch isn't named after a ticket, so I'm keeping it apart." : null),
+          sessionSection(sessionNote),
+        ])}
+        {w.storage === 'cloud' && w.waiting > 0 && <Text dimColor size="caption">{w.waiting} waiting to reach the team server. I'll keep trying.</Text>}
+        {recent.length > 0 && divider}
+        {recent.length > 0 && section([heading('Earlier prompts'), fold('prompts', recent.map(p => item(p.label, usd(p.usd))))])}
+        {footnotes([ESTIMATE])}
       </Box>
     )
   })
