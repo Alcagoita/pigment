@@ -629,13 +629,26 @@ export const register: Register = (on, options) => {
     const item = (left: string, right: string, opts: { note?: string; isMono?: boolean; strong?: boolean; bar?: JSX.Element | null } = {}) => (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={2}>
-          <Text mono={opts.isMono} weight={opts.strong ? 'semibold' : 'medium'} wrap="end">{left}</Text>
+          <Text mono={opts.isMono} size="footnote" weight={opts.strong ? 'semibold' : 'medium'} wrap="end">{left}</Text>
           {opts.bar && <Box flexGrow={1}>{opts.bar}</Box>}
-          <Text dimColor={!opts.strong} weight={opts.strong ? 'semibold' : 'regular'} tabular>{right}</Text>
+          <Text dimColor={!opts.strong} size="footnote" weight="medium" tabular>{right}</Text>
         </Box>
-        {opts.note && <Text dimColor size="footnote" wrap="end">{opts.note}</Text>}
+        {opts.note && <Text dimColor size="caption" wrap="end">{opts.note}</Text>}
       </Box>
     )
+    /** The drawing's bar: a grey track, a fill in amber when the task needs a look. */
+    const bar = (share: number, isLook: boolean, alt: string) => {
+      const w = 1000, fill = Math.round(Math.max(0, Math.min(1, share)) * w)
+      const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="6" viewBox="0 0 ${w} 6" preserveAspectRatio="none">`
+        + `<rect width="${w}" height="6" rx="3" fill="#8a857c" fill-opacity=".22"/>`
+        + (fill > 0 ? `<rect width="${Math.max(fill, 6)}" height="6" rx="3" fill="${isLook ? AMBER : '#8a857c'}" fill-opacity="${isLook ? 1 : 0.75}"/>` : '')
+        + '</svg>'
+      if (e.surface === 'terminal' || !Svg) {
+        const cells = 12, n = Math.round(Math.max(0, Math.min(1, share)) * cells)
+        return <Text color={isLook ? AMBER : undefined} dimColor={!isLook}>{'━'.repeat(n)}<Text dimColor>{'─'.repeat(cells - n)}</Text></Text>
+      }
+      return <Svg source={src} alt={alt} height={6} />
+    }
     const heading = (text: string) => <Text dimColor weight="medium">{text}</Text>
     /** As drawn: the figure, then one line, the view's own title. */
     const headerFor = (title: string) => (
@@ -725,13 +738,13 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column" alignItems="stretch" gap={1}>
         <Button key="optimize-anyway" variant="primary" label={label} onPress={w0.isBusy ? () => undefined : optimize} />
         <Box flexDirection="row" justifyContent="center">
-          <Text dimColor size="footnote">A short summary to carry on in a fresh session{w0.handoffPath ? ` · last one: ${w0.handoffPath}` : ''}</Text>
+          <Text dimColor size="caption">A short summary to carry on in a fresh session{w0.handoffPath ? ` · last one: ${w0.handoffPath}` : ''}</Text>
         </Box>
       </Box>
     ) : null
     const conversation = w0.contextPercent !== undefined ? `conversation ${Math.round(w0.contextPercent)}% full` : ''
     const footnotes = (lines: string[]) => (
-      <Box flexDirection="column" gap={1}>{lines.map(l => <Text dimColor size="footnote">{l}</Text>)}</Box>
+      <Box flexDirection="column" gap={1}>{lines.map(l => <Text dimColor size="caption">{l}</Text>)}</Box>
     )
     const ESTIMATE = "An estimate at list price. On a plan, it's what it would cost, not what you pay."
 
@@ -758,7 +771,7 @@ export const register: Register = (on, options) => {
                     : (Svg ? <Svg source={figureSvg('developer', 2)} alt={`${d.person}, working on ${d.ticket}`} /> : null)}
                   <Box flexDirection="column">
                     <Text weight="semibold">{d.person === 'me' ? 'You' : d.person}</Text>
-                    <Text dimColor mono size="footnote">{d.ticket}</Text>
+                    <Text dimColor mono size="caption">{d.ticket}</Text>
                   </Box>
                 </Box>
               ))}
@@ -789,21 +802,24 @@ export const register: Register = (on, options) => {
               </Box>,
             ]) : null}
             {(look || quiet.length > 0) ? card([
-              <Text color={AMBER} weight="semibold">Worth a look</Text>,
+              <Text color={AMBER} size="footnote" weight="semibold">Worth a look</Text>,
               look ? <Text>{look}</Text> : null,
               quiet.length > 0 ? fold('quiet', quiet.map(q => <Text>{q}</Text>)) : null,
-              quiet.length > 0 ? <Text dimColor size="footnote">A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text> : null,
+              quiet.length > 0 ? <Text dimColor size="caption">A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text> : null,
             ], AMBER_SOFT) : null}
             {section([
-              heading(s.source === 'jira' ? 'In development' : 'Worked on lately'),
+              heading('In development'),
               doing.length === 0 ? <Text dimColor>Nothing in development right now.</Text> : null,
-              doing.length > 0 ? fold('doing', doing.map(t => {
-                const time = timeFor(t, now)
-                const bar = t.estimateMs && time
-                  ? <Progress label={`${t.ticket} time`} value={Math.min(time.elapsedMs / t.estimateMs, 1)} valueText={timeText(t, now)} color={time.look ? AMBER : 'subtle'} />
-                  : null
-                return item(t.ticket, timeText(t, now) || 'not started', { note: t.summary, isMono: true, strong: !!time?.look, bar })
-              })) : null,
+              doing.length > 0 ? fold('doing', (() => {
+                // With an estimate, the bar is the time against it; without, against the longest task here.
+                const longest = Math.max(1, ...doing.map(t => timeFor(t, now)?.elapsedMs ?? 0))
+                return doing.map(t => {
+                  const time = timeFor(t, now)
+                  const share = time ? time.elapsedMs / (t.estimateMs || longest) : 0
+                  const text = timeText(t, now) || 'not started'
+                  return item(t.ticket, text, { note: t.summary, isMono: true, strong: !!time?.look, bar: bar(share, !!time?.look, `${t.ticket}: ${text}`) })
+                })
+              })()) : null,
             ])}
             </Box>,
             s.tasks.length > 0 ? section([
