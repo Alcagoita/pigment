@@ -40,7 +40,7 @@ Pick one in `/config`, under Pigment (**View**).
 - **This task · KAN-55** — every session on that ticket together
 - **This session** — the running total, and how long the conversation has grown
 - **Earlier prompts** — newest first
-- **Log your time** — when your task reaches **Testing** in Jira (or Done), Pigment offers: *"KAN-55 is in Testing. Log the 5h 10m you worked on it in Jira?"* Press **Log it in Jira** and it adds a worklog; press **Not now** and nothing is sent. Only your own worked time, never logged twice. Needs your Jira site, email and API token in `/config`; the status is a setting (**Log time at status**).
+- **Log your time** — when your task reaches **Testing** in Jira (or Done), Pigment offers: *"KAN-55 is in Testing. Log the 5h 10m you worked on it in Jira?"* Press **Log it in Jira** and it adds a worklog; press **Not now** and nothing is sent. Only your own worked time, never logged twice. Uses your Jira connection (below); the status is a setting (**Log time at status**).
 
 **The sprint** (manager)
 - **The team now** — under the manager's figure, a small developer figure for each person working right now, with their name and task. Someone who stops for ten minutes or closes the session leaves the row.
@@ -52,6 +52,8 @@ Pick one in `/config`, under Pigment (**View**).
 - **Sprint summary** — when Jira's open sprint ends, Pigment writes `.pigment/sprints/sprint-22.md` with the total cost, prompts and worked time, and a row per task (cost, prompts, worked, estimate, state). **Write a summary now** does the same for the sprint so far. The card offers **Copy the summary** for a retro or a release note.
 
 **Time is worked time**, not the clock on the wall: each prompt's turn, plus the reading and thinking before it when the gap is under 15 minutes. Longer pauses, nights and weekends don't count. Every person's sessions on a ticket add up.
+
+**Jira, with nothing to set up.** If Claude Code already has the Atlassian connector signed in (the one `/mcp` lists, however it's named), Pigment uses it: it finds your site, takes the project from the branch's ticket (`KAN-55-…` → `KAN`), reads the open sprint and logs time through it. No token, no settings. The connector's own sign-in is what's used; a worklog is only ever added when you press **Log it in Jira**. A task in development started when it entered that status in Jira. The Jira settings in `/config` are only for someone without the connector.
 
 With Jira, done is when the ticket was resolved and the time it was given is its original estimate; a task is worth a look at 80% of it. Without Jira, the list shows tasks worked on in the last three days.
 
@@ -85,7 +87,7 @@ Whoever sets up the project does this once.
    ```
    You log in to Cloudflare in the browser; the script creates the database, the team key and the server, and writes `.pigment/config.json` and the project's `.claude/settings.json` (Pigment's marketplace, enabled for the project). The key is saved to a private file on your computer (`~/.pigment/keys/…`) and never printed.
 3. Commit `.pigment/` and `.claude/settings.json`. From then on, **everyone who opens the project in Claude Code is offered Pigment** — no install line to share.
-4. Nothing to do for the key on this computer: Pigment finds the one the setup saved and connects by itself. For the sprint list, add the Jira site, project key, email and API token in `/config` under Pigment.
+4. Nothing to do for the key on this computer: Pigment finds the one the setup saved and connects by itself. For the sprint list, nothing either if Claude Code has the Atlassian connector signed in; otherwise add the Jira site, project key, email and API token in `/config` under Pigment.
 5. Share the team key with each developer privately: a password manager or a direct message, never the repository or a public channel.
 
 ## Developer setup (joining a team)
@@ -107,7 +109,7 @@ That's all. Until the key is in, Pigment counts on your computer and sends it al
 | Team key | team | The key the team server was set up with (kept in secure storage) |
 | Project folder | optional | Count only sessions inside this folder |
 | Team server | optional | Only for projects without `.pigment/config.json` |
-| Jira site, project key, email, API token | manager | The open sprint's ticket list. Without them, the sprint view shows the last two weeks by task |
+| Jira site, project key, email, API token | manager | Only without the Atlassian connector: the open sprint's ticket list. With neither, the sprint view shows the last two weeks by task |
 
 ## Read it kindly
 

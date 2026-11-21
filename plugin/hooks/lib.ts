@@ -307,6 +307,10 @@ export type JiraIssue = {
     status?: { statusCategory?: { key?: string } }
     resolutiondate?: string | null
     timeoriginalestimate?: number | null
+    /** When the status category last changed: Jira's own field, there when the changelog isn't. */
+    statuscategorychangedate?: string | null
+    /** The Sprint field (customfield_10020 on Jira Cloud). */
+    customfield_10020?: { id: number; name: string; state?: string; startDate?: string; endDate?: string }[] | null
   }
   changelog?: { histories?: { created: string; items?: { field?: string }[] }[] }
 }
@@ -325,13 +329,61 @@ export function sprintIssue(i: JiraIssue): SprintIssue {
   return {
     key: i.key,
     summary: i.fields?.summary,
-    startedAt: moves[0],
+    // Without the changelog (the Atlassian connector), a task in progress started when it entered that category.
+    startedAt: moves[0] ?? (category === 'indeterminate' && i.fields?.statuscategorychangedate ? Date.parse(i.fields.statuscategorychangedate) : undefined),
     doneAt: isDone ? (Number.isNaN(resolved) ? moves[moves.length - 1] : resolved) : undefined,
     estimateMs: typeof estimate === 'number' && estimate > 0 ? estimate * 1000 : undefined,
     stage: isDone ? 'done' : category === 'indeterminate' ? 'doing' : 'todo',
   }
 }
 
+
+// ── Jira through the Atlassian connector ─────────────────────────────
+
+/** The connected MCP server that has Jira's search, whatever /mcp calls it. */
+export function jiraServerFrom(tools: { name: string; serverName: string }[]): string | undefined {
+  return tools.find(t => /(^|__)searchJiraIssuesUsingJql$/.test(t.name))?.serverName
+}
+
+/** A connector result's JSON: its structured content, else its first text block that parses. */
+export function mcpJson(r: { content?: { type: string; text?: string }[]; structuredContent?: unknown; isError?: boolean }): unknown {
+  if (r.isError) throw new Error((r.content ?? []).map(b => b.text ?? '').join(' ').slice(0, 200) || 'Jira refused')
+  if (r.structuredContent !== undefined) return r.structuredContent
+  for (const b of r.content ?? []) {
+    if (b.type !== 'text' || !b.text) continue
+    try { return JSON.parse(b.text) as unknown } catch { /* the next block */ }
+  }
+  throw new Error('No JSON in the reply')
+}
+
+/** The issues of a search reply, in the shapes the connector has used. */
+export function issuesFrom(json: unknown): { issues: JiraIssue[]; next?: string } {
+  const d = json as { issues?: JiraIssue[] | { nodes?: JiraIssue[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }; nextPageToken?: string }
+  if (Array.isArray(d?.issues)) return { issues: d.issues, next: d.nextPageToken }
+  const page = d?.issues?.pageInfo
+  return { issues: d?.issues?.nodes ?? [], next: page?.hasNextPage && page.endCursor ? page.endCursor : undefined }
+}
+
+/** The open sprint, read off the issues' Sprint field. */
+export function openSprintFrom(issues: JiraIssue[]): { id: number; name: string; startDate?: string; endDate?: string } | null {
+  for (const i of issues) {
+    const s = (i.fields?.customfield_10020 ?? []).find(x => x.state === 'active')
+    if (s) return { id: s.id, name: s.name, startDate: s.startDate, endDate: s.endDate }
+  }
+  return null
+}
+
+/** KAN-55 → KAN; anything else has no Jira project. */
+export function projectFrom(ticket: string): string | undefined {
+  return /^([A-Z][A-Z0-9]{1,9})-\d+$/.exec(ticket)?.[1]
+}
+
+/** Jira's own way of writing time spent: "5h 10m", "6m". */
+export function timeSpentText(seconds: number): string {
+  const m = Math.max(1, Math.round(seconds / 60))
+  const h = Math.floor(m / 60)
+  return h ? (m % 60 ? `${h}h ${m % 60}m` : `${h}h`) : `${m}m`
+}
 
 // ── Jira worklog ─────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { activeFor, addPrompt, climbRatio, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow } from '../hooks/lib'
+import { activeFor, addPrompt, climbRatio, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow } from '../hooks/lib'
 import { figureCells, figureSvg } from '../hooks/figures'
 import { resumePrompt } from '../hooks/register'
 import type { PromptCost } from '../types'
@@ -42,7 +42,7 @@ test('task totals add up across sessions; the sprint lists its tickets', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TestOn = Parameters<Extract<Parameters<typeof test>[1], (...args: any[]) => any>>[1]
 
-function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown; runs?: { argv: string[]; stdin?: string }[]; ownClock?: boolean; turns?: number } = {}) {
+function engine(on: TestOn, branch: string, cost: { usd: number; percent: number }, files = new Map<string, string>(), posts: string[] = [], opts: { now?: number; fetch?: (url: string, body?: string) => unknown; runs?: { argv: string[]; stdin?: string }[]; ownClock?: boolean; turns?: number; mcp?: { server: string; call: (tool: string, args: Record<string, unknown>) => unknown } } = {}) {
   const store = new Map<string, unknown>()
   on('env.get', (_, e) => ({ value: (e as unknown as { name: string }).name === 'HOME' ? '/home/t' : undefined }))
   on('fs.exists', (_, e) => { const p = (e as unknown as { path: string }).path; return { value: files.has(p) || [...files.keys()].some(k => k.startsWith(p + '/')) } })
@@ -65,7 +65,17 @@ function engine(on: TestOn, branch: string, cost: { usd: number; percent: number
   on('session.root', () => ({ value: '/work/app' }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.turns', () => ({ value: opts.turns ?? 0 }))
-  on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 200_000, percent: cost.percent }, cost: { usd: cost.usd } } }))
+  on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 200_000, percent: cost.percent,
+    ...(opts.mcp ? { breakdown: { mcpTools: [{ name: `mcp__x__searchJiraIssuesUsingJql`, serverName: opts.mcp.server, tokens: 0, isLoaded: false }] } as never } : {}) }, cost: { usd: cost.usd } } }))
+  if (opts.mcp) {
+    const m = opts.mcp
+    on('mcp.call', (_, e) => {
+      const a = e as unknown as { server: string; tool: string; args: Record<string, unknown> }
+      posts.push(`mcp ${a.server} ${a.tool} ${JSON.stringify(a.args)}`)
+      const out = m.call(a.tool, a.args ?? {})
+      return { value: { isError: out === undefined, content: [{ type: 'text', text: JSON.stringify(out ?? 'refused') }] } }
+    })
+  }
   if (!opts.ownClock) on('clock.now', () => ({ value: opts.now ?? 1_000_000 }))
   if (!opts.ownClock) on('clock.every', () => ({ value: undefined }))
   on('process.run', (_, e) => {
@@ -611,4 +621,88 @@ test('the climb is measured: the last three prompts against the first three', ()
   expect(climbRatio([p(1), p(1), p(1), p(2)])).toBe(0)                       // too few to say
   expect(climbRatio([p(1), p(1), p(1), p(2), p(2), p(2)])).toBe(2)
   expect(climbRatio([p(0), p(0), p(0), p(2), p(2), p(2)])).toBe(0)           // nothing to compare against
+})
+
+test('Jira through the Atlassian connector: no settings, the open sprint and the worklog', { options: { role: 'manager' } }, async ($, on) => {
+  const NOW = Date.UTC(2026, 10, 21, 12)
+  const H = 3_600_000
+  const posts: string[] = []
+  const sprint = [{ id: 34, name: 'Sprint 22', state: 'active', startDate: '2026-11-19T12:23:17.794Z', endDate: '2026-11-28T10:41:00.000Z' }]
+  const store = engine(on, 'KAN-045-invite', { usd: 0, percent: 10 }, new Map(), posts, { now: NOW, mcp: {
+    server: 'claude.ai Atlassian',
+    call: (tool, args) => {
+      if (tool === 'getAccessibleAtlassianResources') return [{ id: 'cloud-1', url: 'https://team.atlassian.net' }]
+      if (tool === 'addWorklogToJiraIssue') return { id: '1' }
+      if (tool !== 'searchJiraIssuesUsingJql') return undefined
+      if (args.jql === 'project = "KAN"') return { issues: { nodes: [], pageInfo: { hasNextPage: false } } }
+      if (args.jql === 'key = KAN-045') return { issues: { nodes: [{ key: 'KAN-045', fields: { status: { name: 'Testing', statusCategory: { key: 'indeterminate' } } } }] } }
+      return { issues: { nodes: [
+        { key: 'KAN-045', fields: { summary: 'Invite link', status: { statusCategory: { key: 'indeterminate' } }, timeoriginalestimate: 6 * 3600,
+          statuscategorychangedate: new Date(NOW - 5 * H).toISOString(), customfield_10020: sprint } },
+        { key: 'KAN-10', fields: { summary: 'Later', status: { statusCategory: { key: 'new' } }, customfield_10020: sprint } },
+      ], pageInfo: { hasNextPage: false, endCursor: null } } }
+    },
+  } })
+  store.set('migrated:/work/app', true)
+  store.set('ledger:/work/app', { tasks: { 'KAN-045': { ticket: 'KAN-045', usd: 10, prompts: 9, lastAt: NOW, activeMs: 5 * H } }, sessions: {} })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+
+  const ui = await $.ui.mount({ ...pane('Pigment · Sprint 22'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^Sprint 22 so far$/ })).toBeTruthy()      // the sprint, from the connector
+  expect(await ui.find({ type: 'Text', text: /^KAN-045 has used 5h of its 6h\.$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^5h of 6h$/ })).toBeTruthy()
+  expect(posts.some(p => p.includes('sprint in openSprints()') && p.includes('"cloudId":"cloud-1"'))).toBe(true)
+  expect(posts.some(p => p.includes('/rest/'))).toBe(false)                            // no token, no REST
+  expect(store.get('jiraProject:/work/app')).toBe('KAN')                               // from the branch's ticket
+  await ui.unmount()
+})
+
+test('without the connector or settings, Jira is simply not there', { options: { role: 'manager' } }, async ($, on) => {
+  const posts: string[] = []
+  const store = engine(on, 'KAN-045-invite', { usd: 0, percent: 10 }, new Map(), posts)
+  store.set('migrated:/work/app', true)
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+  const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^The last two weeks$/ })).toBeTruthy()
+  expect(posts.some(p => p.startsWith('mcp '))).toBe(false)
+  await ui.unmount()
+})
+
+test('connector helpers: find the server, read the reply, the sprint and the project', () => {
+  expect(jiraServerFrom([{ name: 'mcp__a__fetch', serverName: 'a' }, { name: 'mcp__061c__searchJiraIssuesUsingJql', serverName: '061c' }])).toBe('061c')
+  expect(jiraServerFrom([{ name: 'mcp__a__fetch', serverName: 'a' }])).toBeUndefined()
+  expect(mcpJson({ content: [{ type: 'text', text: '{"a":1}' }] })).toEqual({ a: 1 })
+  expect(() => mcpJson({ isError: true, content: [{ type: 'text', text: 'no' }] })).toThrow()
+  expect(issuesFrom({ issues: { nodes: [{ key: 'K-1' }], pageInfo: { hasNextPage: true, endCursor: 'c2' } } })).toEqual({ issues: [{ key: 'K-1' }], next: 'c2' })
+  expect(issuesFrom({ issues: [{ key: 'K-2' }] }).issues[0]?.key).toBe('K-2')
+  expect(openSprintFrom([{ key: 'K-1', fields: { customfield_10020: [{ id: 3, name: 'Sprint 21', state: 'closed' }, { id: 4, name: 'Sprint 22', state: 'active' }] } }])?.name).toBe('Sprint 22')
+  expect(projectFrom('KAN-461')).toBe('KAN')
+  expect(projectFrom('No ticket')).toBeUndefined()
+  expect(timeSpentText(18_600)).toBe('5h 10m')
+  expect(timeSpentText(3_600)).toBe('1h')
+  expect(timeSpentText(10)).toBe('1m')
+})
+
+test('a task in Testing, through the connector: offer, then log the time with no token', async ($, on) => {
+  const posts: string[] = []
+  const store = engine(on, 'KAN-045-invite', { usd: 0, percent: 10 }, new Map(), posts, { now: Date.UTC(2026, 10, 21, 18), mcp: {
+    server: 'claude.ai Atlassian',
+    call: (tool, args) => tool === 'getAccessibleAtlassianResources' ? [{ id: 'cloud-1', url: 'https://team.atlassian.net' }]
+      : tool === 'addWorklogToJiraIssue' ? { id: '1' }
+      : args.jql === 'key = KAN-045' ? { issues: { nodes: [{ key: 'KAN-045', fields: { status: { name: 'Testing', statusCategory: { key: 'indeterminate' } } } }] } }
+      : { issues: { nodes: [] } },
+  } })
+  store.set('migrated:/work/app', true)
+  store.set('ledger:/work/app', { tasks: { 'KAN-045': { ticket: 'KAN-045', usd: 4, prompts: 10, lastAt: 0, activeMs: 5 * 3_600_000 } }, sessions: {} })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^KAN-045 is in Testing$/ })).toBeTruthy()
+  await ui.press({ key: 'log-it' })
+  const log = posts.find(p => p.startsWith('mcp claude.ai Atlassian addWorklogToJiraIssue '))
+  expect(log).toBeTruthy()
+  expect(JSON.parse(log!.slice(log!.indexOf('{')))).toMatchObject({ cloudId: 'cloud-1', issueIdOrKey: 'KAN-045', timeSpent: '5h' })
+  expect(store.get('logged:/work/app:KAN-045')).toBe(5 * 3_600_000)
+  await ui.unmount()
 })
