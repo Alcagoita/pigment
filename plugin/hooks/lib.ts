@@ -69,6 +69,13 @@ export function signalsFor(w: Pick<Work, 'contextPercent' | 'prompts'>): Signal[
   return out
 }
 
+/** How many times the last three prompts cost, on average, against the first three; 0 before six prompts. */
+export function climbRatio(prompts: PromptCost[]): number {
+  if (prompts.length < 6) return 0
+  const early = avg(prompts.slice(0, 3))
+  return early > 0 ? avg(prompts.slice(-3)) / early : 0
+}
+
 export function reasonText(signals: Signal[], prompts: PromptCost[]): string {
   if (signals.includes('long')) return 'This conversation has grown long. From here, answers can get less sharp.'
   if (signals.includes('climbing')) {

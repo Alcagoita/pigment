@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { activeFor, addPrompt, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow } from '../hooks/lib'
+import { activeFor, addPrompt, climbRatio, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow } from '../hooks/lib'
 import { figureCells, figureSvg } from '../hooks/figures'
 import { resumePrompt } from '../hooks/register'
 import type { PromptCost } from '../types'
@@ -397,7 +397,9 @@ test('the manager view also offers a fresh start when its own conversation grows
   const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /grown long/ })).toBeTruthy()
   expect(await ui.find({ type: 'Button', key: 'optimize' })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /^This session: \$0\.90, conversation 72% full$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^This session$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^\$0\.90$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^Conversation 72% full/ })).toBeTruthy()
   await ui.unmount()
 })
 
@@ -525,7 +527,7 @@ test('a reload keeps the session numbers, so Start fresh stays', async ($, on) =
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true }) // the reload runs session.start again
   const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /^1 prompt/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /(^| · )1 prompt\b/ })).toBeTruthy()
   await ui.unmount()
 })
 
@@ -574,7 +576,7 @@ test('the pane reads the conversation live: a long session shows as long even ri
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true }) // nothing counted by this copy yet
   const ui = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /^\$57\.43$/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /^140 prompts/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /(^| · )140 prompts/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /grown long/ })).toBeTruthy()
   expect(await ui.find({ type: 'Button', key: 'optimize' })).toBeTruthy()
   await ui.unmount()
@@ -602,4 +604,11 @@ test('pressing Optimize now keeps the card; Not now hides it until the conversat
   const again = await $.ui.mount({ ...pane('Pigment · Your work'), surface: 'desktop' })
   expect(await again.find({ type: 'Text', text: /grown long/ })).toBeTruthy()
   await again.unmount()
+})
+
+test('the climb is measured: the last three prompts against the first three', () => {
+  const p = (usd: number) => ({ at: 0, label: 'x', ticket: 'KAN-1', usd, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }) as PromptCost
+  expect(climbRatio([p(1), p(1), p(1), p(2)])).toBe(0)                       // too few to say
+  expect(climbRatio([p(1), p(1), p(1), p(2), p(2), p(2)])).toBe(2)
+  expect(climbRatio([p(0), p(0), p(0), p(2), p(2), p(2)])).toBe(0)           // nothing to compare against
 })
