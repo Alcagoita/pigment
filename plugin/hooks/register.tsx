@@ -594,17 +594,28 @@ export const register: Register = (on, options) => {
     const promptCount = Math.max(turns, stored.prompts.length)
     const { Raster, Svg } = $.ui.resolve(e) as unknown as {
       Raster?: (p: { key: string; columns: number; rows: number; cells: string }) => JSX.Element
-      Svg?: (p: { source: string; alt: string }) => JSX.Element
+      Svg?: (p: { source: string; alt: string; height?: number; width?: number }) => JSX.Element
     }
     const who = role === 'manager' ? 'Manager' : 'Developer'
     const art = e.surface === 'terminal'
       ? (Raster ? <Raster key="figure" {...figureCells(role)} /> : null)
-      : (Svg ? <Svg source={figureSvg(role)} alt={role === 'manager' ? 'A little orange block figure in a black hat, holding a magnifying glass' : 'A little orange block figure behind a laptop'} /> : null)
+      : (Svg ? <Svg source={figureSvg(role, 3)} alt={role === 'manager' ? 'A little orange block figure in a black hat, holding a magnifying glass' : 'A little orange block figure behind a laptop'} /> : null)
     // ── Building blocks: cards, a label with its figure on the right, a quiet note ──
     const AMBER = '#e8a86a'
     const card = (children: JSX.Element | (JSX.Element | null | false | undefined)[], color: string = 'subtle') => (
       <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={2} paddingY={1} gap={1}>{children}</Box>
     )
+    /** A section of the one surface: no border, the sections split by a thin line, as the drawing has it. */
+    const section = (children: (JSX.Element | null | false | undefined)[]) => (
+      <Box flexDirection="column" gap={1}>{children}</Box>
+    )
+    const divider = e.surface === 'terminal' || !Svg
+      ? <Text dimColor>{'─'.repeat(Math.max(10, Math.min(60, (e.viewport?.columns ?? 40) - 4)))}</Text>
+      : <Svg source={'<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1" viewBox="0 0 2000 1" preserveAspectRatio="none"><rect width="2000" height="1" fill="#8a857c" fill-opacity=".35"/></svg>'} alt="" height={1} />
+    const stack = (parts: (JSX.Element | null | false | undefined)[]) => {
+      const shown = parts.filter(Boolean) as JSX.Element[]
+      return <Box flexDirection="column" gap={1}>{shown.flatMap((x, i) => (i === 0 ? [x] : [divider, x]))}</Box>
+    }
     const figure = (label: string, value: string, note?: string | null) => (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" gap={1}>
@@ -614,10 +625,11 @@ export const register: Register = (on, options) => {
         {note && <Text dimColor size="footnote">{note}</Text>}
       </Box>
     )
-    const item = (left: string, right: string, opts: { note?: string; isMono?: boolean; strong?: boolean } = {}) => (
+    const item = (left: string, right: string, opts: { note?: string; isMono?: boolean; strong?: boolean; bar?: JSX.Element | null } = {}) => (
       <Box flexDirection="column">
-        <Box flexDirection="row" justifyContent="space-between" gap={1}>
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={2}>
           <Text mono={opts.isMono} weight={opts.strong ? 'semibold' : 'medium'} wrap="end">{left}</Text>
+          {opts.bar && <Box flexGrow={1}>{opts.bar}</Box>}
           <Text dimColor={!opts.strong} weight={opts.strong ? 'semibold' : 'regular'} tabular>{right}</Text>
         </Box>
         {opts.note && <Text dimColor size="footnote" wrap="end">{opts.note}</Text>}
@@ -710,9 +722,11 @@ export const register: Register = (on, options) => {
     ], AMBER) : null
     // Otherwise always there: a fresh start whenever the person wants one.
     const freshButton = w0.isMeasured && !showCard ? (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column" alignItems="stretch" gap={1}>
         <Button key="optimize-anyway" variant="primary" label={label} onPress={w0.isBusy ? () => undefined : optimize} />
-        <Text dimColor size="footnote">A short summary to carry on in a fresh session. Open a new session and paste: it carries on from here.{w0.handoffPath ? ` Last one: ${w0.handoffPath}` : ''}</Text>
+        <Box flexDirection="row" justifyContent="center">
+          <Text dimColor size="footnote">A short summary to carry on in a fresh session{w0.handoffPath ? ` · last one: ${w0.handoffPath}` : ''}</Text>
+        </Box>
       </Box>
     ) : null
     const conversation = w0.contextPercent !== undefined ? `conversation ${Math.round(w0.contextPercent)}% full` : ''
@@ -731,7 +745,7 @@ export const register: Register = (on, options) => {
       const look = lookText(s.tasks, now)
       // A small developer figure for each person working right now; they leave when they stop.
       const team = teamNow(s.live, c.sessionId)
-      const teamCard = card([
+      const teamCard = section([
         heading(`Active developers in this project${team.length > 0 ? ` · ${team.length}` : ''}`),
         team.length === 0
           ? <Text dimColor>Nobody else is working right now.</Text>
@@ -756,68 +770,58 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column" gap={1}>
           {header}
-          {teamCard}
           {storageCard}
           {freshCard}
-          {card([
-            figure(title, usd(s.total), `${s.tasks.length} ${s.tasks.length === 1 ? 'task' : 'tasks'}, counted on ${where}`),
-            s.note ? <Text dimColor size="footnote">{s.note}</Text> : null,
-            w0.isMeasured ? <Text dimColor size="footnote">This session: {usd(w0.sessionUsd)}{conversation ? `, ${conversation}` : ''}</Text> : null,
+          {stack([
+            teamCard,
+            section([
+              figure(title, usd(s.total), `${s.tasks.length} ${s.tasks.length === 1 ? 'task' : 'tasks'}, counted on ${where}`),
+              s.note ? <Text dimColor size="footnote">{s.note}</Text> : null,
+              w0.isMeasured ? <Text dimColor size="footnote">This session: {usd(w0.sessionUsd)}{conversation ? `, ${conversation}` : ''}</Text> : null,
+            ]),
+            s.summary ? card([
+              <Text weight="semibold">{s.summary.hasEnded ? `${s.summary.name} has ended` : `${s.summary.name} so far`}</Text>,
+              <Text tabular>{usd(s.summary.usd)} · {s.summary.prompts} prompts · {duration(s.summary.activeMs)} worked</Text>,
+              <Text dimColor size="footnote">Saved to {s.summary.path}</Text>,
+              <Box flexDirection="row" gap={1}>
+                <Button key="summary-copy" label="Copy the summary" onPress={async () => {
+                  const r = await $.ui.copy({ text: s.summary?.text ?? '', surface: e.surface })
+                  $.ui.toast(r.isCopied ? 'Copied.' : `It's in ${s.summary?.path}.`)
+                }} />
+                <Button key="summary-close" label="Close" onPress={() => update($, sprint, x => (x ? { ...x, summary: undefined } : x))} />
+              </Box>,
+            ]) : null,
+            (look || quiet.length > 0) ? card([
+              <Text color="warning" weight="semibold">Worth a look</Text>,
+              look ? <Text>{look}</Text> : null,
+              quiet.length > 0 ? fold('quiet', quiet.map(q => <Text>{q}</Text>)) : null,
+              quiet.length > 0 ? <Text dimColor size="footnote">A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text> : null,
+            ], 'warning') : null,
+            section([
+              heading(s.source === 'jira' ? 'In development' : 'Worked on lately'),
+              doing.length === 0 ? <Text dimColor>Nothing in development right now.</Text> : null,
+              doing.length > 0 ? fold('doing', doing.map(t => {
+                const time = timeFor(t, now)
+                const bar = t.estimateMs && time
+                  ? <Progress label={`${t.ticket} time`} value={Math.min(time.elapsedMs / t.estimateMs, 1)} valueText={timeText(t, now)} color={time.look ? 'warning' : 'subtle'} />
+                  : null
+                return item(t.ticket, timeText(t, now) || 'not started', { note: t.summary, isMono: true, strong: !!time?.look, bar })
+              })) : null,
+            ]),
+            s.tasks.length > 0 ? section([
+              heading('By task'),
+              fold('tasks', s.tasks.map(t => {
+                const time = timeText(t, now)
+                return item(t.ticket, usd(t.usd), { note: [t.summary, time].filter(Boolean).join(' · ') || undefined, isMono: true })
+              })),
+            ]) : null,
+            s.live.length > 0 ? section([
+              heading(`${s.live.length} ${s.live.length === 1 ? 'session' : 'sessions'} working now`),
+              fold('live', s.live.map(l => item(l.ticket, usd(l.usd), {
+                note: `${l.person === 'me' ? 'You' : l.person} · ${ago(now - l.lastAt)}`, isMono: true,
+              }))),
+            ]) : null,
           ])}
-
-          {s.summary && card([
-            <Text weight="semibold">{s.summary.hasEnded ? `${s.summary.name} has ended` : `${s.summary.name} so far`}</Text>,
-            <Text tabular>{usd(s.summary.usd)} · {s.summary.prompts} prompts · {duration(s.summary.activeMs)} worked</Text>,
-            <Text dimColor size="footnote">Saved to {s.summary.path}</Text>,
-            <Box flexDirection="row" gap={1}>
-              <Button key="summary-copy" label="Copy the summary" onPress={async () => {
-                const r = await $.ui.copy({ text: s.summary?.text ?? '', surface: e.surface })
-                $.ui.toast(r.isCopied ? 'Copied.' : `It's in ${s.summary?.path}.`)
-              }} />
-              <Button key="summary-close" label="Close" onPress={() => update($, sprint, x => (x ? { ...x, summary: undefined } : x))} />
-            </Box>,
-          ])}
-
-          {(look || quiet.length > 0) && card([
-            <Text color="warning" weight="semibold">Worth a look</Text>,
-            look ? <Text>{look}</Text> : null,
-            quiet.length > 0 ? fold('quiet', quiet.map(q => <Text>{q}</Text>)) : null,
-            quiet.length > 0 ? <Text dimColor size="footnote">A quiet session can mean someone is stuck, waiting on an answer, or simply away.</Text> : null,
-          ], 'warning')}
-
-          {card([
-            heading(s.source === 'jira' ? 'In development' : 'Worked on lately'),
-            doing.length === 0 ? <Text dimColor>Nothing in development right now.</Text> : null,
-            doing.length > 0 ? fold('doing', doing.map(t => {
-              const time = timeFor(t, now)
-              return (
-                <Box flexDirection="column">
-                  {item(t.ticket, timeText(t, now) || 'not started', { note: t.summary, isMono: true, strong: !!time?.look })}
-                  {t.estimateMs && time && (
-                    <Progress label={`${t.ticket} time`} value={Math.min(time.elapsedMs / t.estimateMs, 1)}
-                      valueText={timeText(t, now)} color={time.look ? 'warning' : 'subtle'} />
-                  )}
-                </Box>
-              )
-            })) : null,
-          ])}
-
-          {card([
-            heading('By task'),
-            s.tasks.length === 0 ? <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text> : null,
-            s.tasks.length > 0 ? fold('tasks', s.tasks.map(t => {
-              const time = timeText(t, now)
-              return item(t.ticket, usd(t.usd), { note: [t.summary, time].filter(Boolean).join(' · ') || undefined, isMono: true })
-            })) : null,
-          ])}
-
-          {card([
-            heading(s.live.length === 0 ? 'Nobody working right now' : `${s.live.length} ${s.live.length === 1 ? 'session' : 'sessions'} working now`),
-            s.live.length > 0 ? fold('live', s.live.map(l => item(l.ticket, usd(l.usd), {
-              note: `${l.person === 'me' ? 'You' : l.person} · ${ago(now - l.lastAt)}`, isMono: true,
-            }))) : null,
-          ])}
-
           {freshButton}
           {s.tasks.length > 0 && (
             <Box flexDirection="row">
@@ -827,7 +831,7 @@ export const register: Register = (on, options) => {
               }} />
             </Box>
           )}
-          {footnotes(["Time is what was worked in sessions: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.", ESTIMATE])}
+          {footnotes(["Time is worked time: each prompt, plus reading and thinking between prompts. Pauses over 15 minutes don't count.", ESTIMATE])}
         </Box>
       )
     }
@@ -855,7 +859,7 @@ export const register: Register = (on, options) => {
             <Button key="log-later" label="Not now" onPress={() => update($, work, x => ({ ...x, logOffer: undefined }))} />
           </Box>,
         ], AMBER)}
-        {card([
+        {stack([
           figure('This prompt', last ? usd(last.usd) : '—', last ? `${tokens(last.output)} written · ${tokens(last.cacheRead)} read from memory` : null),
           figure(`This task · ${w.ticket}`, usd(w.taskUsd), w.ticket === NO_TICKET ? "This branch isn't named after a ticket, so I'm keeping it apart." : null),
           <Box flexDirection="column" gap={1}>
@@ -865,15 +869,10 @@ export const register: Register = (on, options) => {
             {w.storage === 'cloud' && w.waiting > 0 && <Text dimColor size="footnote">{w.waiting} waiting to reach the team server. I'll keep trying.</Text>}
           </Box>,
         ])}
-
         {freshCard}
         {freshButton}
-
-        {card([
-          heading('Earlier prompts'),
-          recent.length === 0 ? <Text dimColor>Nothing spent yet. I'll keep count as we go.</Text> : null,
-          recent.length > 0 ? fold('prompts', recent.map(p => item(p.label, usd(p.usd)))) : null,
-        ])}
+        {recent.length > 0 && divider}
+        {recent.length > 0 && section([heading('Earlier prompts'), fold('prompts', recent.map(p => item(p.label, usd(p.usd))))])}
         {footnotes([ESTIMATE])}
       </Box>
     )

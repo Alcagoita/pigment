@@ -562,7 +562,7 @@ test('Start fresh: the press returns at once; a continuation is copied to paste,
   expect(filled).toBe('')            // never sent into this session
   // Still there for the next time, with the last one named.
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /Last one: \.claude\/handoffs\/2026-11-20-19-28\.md/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /last one: \.claude\/handoffs\/2026-11-20-19-28\.md/ })).toBeTruthy()
   await ui.unmount()
 })
 
