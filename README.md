@@ -12,7 +12,7 @@
 
 What your AI work costs, beside the chat: each prompt, each task, each session — and for whoever runs the sprint, the sprint by task and who is working now. A Claude Code mod.
 
-When a conversation gets long or each prompt starts costing much more than at the start, Pigment suggests a fresh start: **Optimize now** writes a short summary of the work in progress and copies it, ready to paste: open a new session, paste, and it carries on from there. It never replaces compacting; it's a calmer, separate option.
+When a conversation gets long or each prompt starts costing much more than at the start, Pigment suggests a fresh start: **Optimize now** writes a short summary of the work in progress to `.claude/handoffs/` and copies a two-line note pointing to it: open a new session, paste, and it carries on from there. It never replaces compacting; it's a calmer, separate option.
 
 Costs are local estimates at list price, as `/cost` shows them. On a subscription they are what the work would cost, not what you pay.
 
