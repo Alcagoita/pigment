@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { activeFor, addPrompt, climbRatio, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow } from '../hooks/lib'
+import { activeFor, addPrompt, climbRatio, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow, silentTasks, silentText, silentNote, workingMs, SILENT_MS } from '../hooks/lib'
 import { figureCells, figureSvg } from '../hooks/figures'
 import { resumePrompt } from '../hooks/register'
 import type { PromptCost } from '../types'
@@ -291,6 +291,83 @@ test('The sprint with Jira: In development with time, and Worth a look', {
   }
 })
 
+
+test('a task in development with no numbers for an hour is listed; weekends don\'t count', () => {
+  const H = 3_600_000
+  const fri = new Date(2026, 10, 20, 12).getTime()
+  const mon = (h: number) => new Date(2026, 10, 23, h).getTime()
+  expect(workingMs(fri, mon(12))).toBe(24 * H)              // Friday afternoon + Monday morning
+  expect(workingMs(new Date(2026, 10, 21, 9).getTime(), new Date(2026, 10, 22, 18).getTime())).toBe(0)
+  const doing = (o: object) => ({ ticket: 'KAN-345', usd: 1, prompts: 1, lastAt: fri, stage: 'doing' as const, assignee: 'Ana', ...o })
+  const at = (o: object, now: number) => silentTasks([doing(o)], now).map(t => t.ticket)
+  expect(at({ lastAt: mon(9) }, mon(9) + 59 * 60_000)).toEqual([])
+  expect(at({ lastAt: mon(9) }, mon(10))).toEqual(['KAN-345'])
+  expect(at({ lastAt: new Date(2026, 10, 21, 10).getTime() }, new Date(2026, 10, 22, 20).getTime())).toEqual([])  // all weekend
+  expect(silentTasks([doing({})], mon(13)).map(t => t.ticket)).toEqual(['KAN-345'])
+  expect(silentTasks([doing({ stage: 'todo' })], mon(13))).toEqual([])
+  // Just moved into development: counted from the move, not from older numbers.
+  expect(silentTasks([doing({ doingSince: mon(12) + 30 * 60_000 })], mon(13))).toEqual([])
+  // Never heard from: counted from the move; with neither, I can't tell, so it isn't listed.
+  expect(silentTasks([doing({ lastAt: 0, doingSince: fri })], mon(13)).length).toBe(1)
+  expect(silentTasks([doing({ lastAt: 0 })], mon(13))).toEqual([])
+  expect(SILENT_MS).toBe(H)
+  expect(silentText(doing({}), fri + 3 * 24 * H)).toBe("KAN-345 is in development with Ana, and I haven't heard from it in 3d.")
+  expect(silentText(doing({ lastAt: 0, assignee: undefined }), mon(13))).toBe("KAN-345 is in development, and I haven't heard from it yet.")
+  // Some heard from, some not: how many, then which. None heard from: one line for the lot.
+  const now = mon(13)
+  const heard = doing({ ticket: 'KAN-96', lastAt: now - 10 * 60_000 })
+  const quiet = (ticket: string) => doing({ ticket, lastAt: mon(9) })
+  expect(silentNote([heard], now)).toBe(null)
+  expect(silentNote([heard, quiet('KAN-345'), quiet('KAN-346')], now)).toEqual({
+    lead: "I'm hearing from 1 of the 3 tasks in development. 2 have gone quiet:",
+    rows: ["KAN-345 is in development with Ana, and I haven't heard from it in 4h.", "KAN-346 is in development with Ana, and I haven't heard from it in 4h."],
+    caption: 'Pigment may not be running there, or the work is on hold.',
+  })
+  expect(silentNote([heard, quiet('KAN-345')], now)?.lead).toBe("I'm hearing from 1 of the 2 tasks in development. One has gone quiet:")
+  expect(silentNote([quiet('KAN-345'), quiet('KAN-346'), quiet('KAN-347')], now)).toEqual({
+    lead: 'None of the 3 tasks in development has sent me anything for over an hour.', rows: [], caption: 'Everyone may be in a meeting, or done for the day.',
+  })
+  expect(silentNote([quiet('KAN-345')], now)?.rows).toEqual(["KAN-345 is in development with Ana, and I haven't heard from it in 4h."])
+  const i = sprintIssue({ key: 'KAN-345', fields: { status: { statusCategory: { key: 'indeterminate' } }, statuscategorychangedate: '2026-11-20T10:00:00.000Z', assignee: { displayName: 'Ana' } } })
+  expect(i.assignee).toBe('Ana')
+  expect(i.doingSince).toBe(Date.parse('2026-11-20T10:00:00.000Z'))
+  expect(sprintIssue({ key: 'KAN-1', fields: { status: { statusCategory: { key: 'new' } }, assignee: null } }).doingSince).toBe(undefined)
+})
+
+test('under the team, tasks in development I haven\'t heard from', {
+  options: { role: 'manager', jiraSite: 'team.atlassian.net', jiraProject: 'KAN', jiraEmail: 'm@example.com', jiraToken: 't' },
+}, async ($, on) => {
+  const H = 3_600_000
+  const NOW = new Date(2026, 10, 25, 12).getTime()   // a Wednesday
+  const iso = (ms: number) => new Date(ms).toISOString()
+  const cost = { usd: 0, percent: 10 }
+  const store = engine(on, 'develop', cost, new Map(), [], { now: NOW, fetch: url =>
+    url.includes('/board?') ? { values: [{ id: 7 }] }
+      : url.includes('/sprint?state=active') ? { values: [{ id: 22, name: 'Sprint 22' }] }
+      : { issues: [
+          { key: 'KAN-345', fields: { summary: 'Silent', status: { statusCategory: { key: 'indeterminate' } }, assignee: { displayName: 'Ana' } },
+            changelog: { histories: [{ created: iso(NOW - 72 * H), items: [{ field: 'status' }] }] } },
+          { key: 'KAN-96', fields: { summary: 'Heard', status: { statusCategory: { key: 'indeterminate' } }, assignee: { displayName: 'Rui' } },
+            changelog: { histories: [{ created: iso(NOW - 72 * H), items: [{ field: 'status' }] }] } },
+          { key: 'KAN-10', fields: { summary: 'Later', status: { statusCategory: { key: 'new' } }, assignee: { displayName: 'Ana' } } },
+        ] } })
+  store.set('migrated:/work/app', true)
+  store.set('ledger:/work/app', {
+    tasks: { 'KAN-96': { ticket: 'KAN-96', usd: 3, prompts: 4, lastAt: NOW - 30 * 60_000, activeMs: 2 * H } },
+    sessions: {},
+  })
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'pigment', args: '' } as never)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface })
+    expect(await ui.find({ type: 'Text', text: /^I'm hearing from 1 of the 2 tasks in development\. One has gone quiet:$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^KAN-345 is in development with Ana, and I haven't heard from it yet\.$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^KAN-96 is in development/ })).toBeFalsy()
+    expect(await ui.find({ type: 'Text', text: /^KAN-10 is in development/ })).toBeFalsy()
+    expect(await ui.find({ type: 'Text', text: /^Pigment may not be running there, or the work is on hold\.$/ })).toBeTruthy()
+    await ui.unmount()
+  }
+})
 
 test('worklog and summary helpers', () => {
   expect(isLogStatus('testing', 'indeterminate', 'Testing')).toBe(true)

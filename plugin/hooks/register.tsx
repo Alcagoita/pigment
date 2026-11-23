@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
-  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, cleanKey, keyNameFrom, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, parseConfig, parseLines,
+  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, cleanKey, keyNameFrom, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, silentNote, parseConfig, parseLines,
   isLogStatus, jiraStarted, MIN_LOG_MS, prune, climbRatio, signalsFor, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import { figureCells, figureSvg } from './figures'
@@ -369,7 +369,7 @@ async function getJson($: EngineInterface, url: string, headers: Record<string, 
 
 type JiraSprint = { id: number; name: string; startDate?: string; endDate?: string; issues: SprintIssue[] }
 
-const SPRINT_FIELDS = ['summary', 'status', 'resolutiondate', 'timeoriginalestimate', 'statuscategorychangedate', 'customfield_10020']
+const SPRINT_FIELDS = ['summary', 'status', 'resolutiondate', 'timeoriginalestimate', 'statuscategorychangedate', 'assignee', 'customfield_10020']
 
 async function sprintIssues($: EngineInterface, c: Ctx, link: JiraLink, id: number): Promise<SprintIssue[]> {
   if (link.kind === 'rest') {
@@ -876,6 +876,8 @@ export const register: Register = (on, options) => {
       const look = lookText(s.tasks, now)
       // A small developer figure for each person working right now; they leave when they stop.
       const team = teamNow(s.live, c.sessionId)
+      // Tasks in development I've heard nothing about: assigned work with no numbers.
+      const silent = s.source === 'jira' ? silentNote(s.tasks, now) : null
       const teamCard = section([
         heading('The team now'),
         team.length === 0
@@ -895,6 +897,13 @@ export const register: Register = (on, options) => {
               ))}
             </Box>
           ),
+        silent ? (
+          <Box flexDirection="column" gap={1}>
+            {silent.lead ? <Text>{silent.lead}</Text> : null}
+            {silent.rows.length > 0 ? fold('silent', silent.rows.map(r => <Text>{r}</Text>)) : null}
+            <Text dimColor size="caption">{silent.caption}</Text>
+          </Box>
+        ) : null,
       ])
       const quiet = (s.quiet ?? []).map(q => `${q.person === 'me' ? 'Your' : `${q.person}'s`} session on ${q.ticket} has been quiet for ${duration(now - q.lastAt)}.`)
       const where = s.where === 'team' ? 'the team server' : s.where

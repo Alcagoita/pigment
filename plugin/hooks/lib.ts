@@ -129,7 +129,7 @@ export function liveFrom(sessions: LiveSession[], now: number): LiveSession[] {
  * then any spending on tickets outside the sprint list ("No ticket" included) when it has one.
  * Without a sprint list, the tasks with activity in the last two weeks.
  */
-export type SprintIssue = { key: string; summary?: string; startedAt?: number; doneAt?: number; estimateMs?: number; stage?: 'todo' | 'doing' | 'done' }
+export type SprintIssue = { key: string; summary?: string; startedAt?: number; doneAt?: number; estimateMs?: number; stage?: 'todo' | 'doing' | 'done'; assignee?: string; doingSince?: number }
 
 /** Tasks that need a look first, then the most expensive. */
 function byAttention(now: number) {
@@ -142,7 +142,7 @@ export function sprintRows(costs: TaskCost[], sprint: SprintIssue[] | null, now:
   if (sprint) {
     const rows: TaskCost[] = sprint.map(s => {
       const c = byKey.get(s.key) ?? { ticket: s.key, usd: 0, prompts: 0, lastAt: 0 }
-      return { ...c, summary: s.summary, startedAt: s.startedAt, doneAt: s.doneAt, estimateMs: s.estimateMs, stage: s.stage }
+      return { ...c, summary: s.summary, startedAt: s.startedAt, doneAt: s.doneAt, estimateMs: s.estimateMs, stage: s.stage, assignee: s.assignee, doingSince: s.doingSince }
     })
     const none = byKey.get(NO_TICKET)
     if (none && none.usd > 0) rows.push(none)
@@ -309,6 +309,7 @@ export type JiraIssue = {
     timeoriginalestimate?: number | null
     /** When the status category last changed: Jira's own field, there when the changelog isn't. */
     statuscategorychangedate?: string | null
+    assignee?: { displayName?: string } | null
     /** The Sprint field (customfield_10020 on Jira Cloud). */
     customfield_10020?: { id: number; name: string; state?: string; startDate?: string; endDate?: string }[] | null
   }
@@ -326,6 +327,7 @@ export function sprintIssue(i: JiraIssue): SprintIssue {
   const isDone = category === 'done'
   const resolved = i.fields?.resolutiondate ? Date.parse(i.fields.resolutiondate) : NaN
   const estimate = i.fields?.timeoriginalestimate
+  const categoryAt = i.fields?.statuscategorychangedate ? Date.parse(i.fields.statuscategorychangedate) : NaN
   return {
     key: i.key,
     summary: i.fields?.summary,
@@ -334,6 +336,9 @@ export function sprintIssue(i: JiraIssue): SprintIssue {
     doneAt: isDone ? (Number.isNaN(resolved) ? moves[moves.length - 1] : resolved) : undefined,
     estimateMs: typeof estimate === 'number' && estimate > 0 ? estimate * 1000 : undefined,
     stage: isDone ? 'done' : category === 'indeterminate' ? 'doing' : 'todo',
+    assignee: i.fields?.assignee?.displayName || undefined,
+    // When it last entered development: Jira's category change, else its last status move.
+    doingSince: category === 'indeterminate' ? (Number.isNaN(categoryAt) ? moves[moves.length - 1] : categoryAt) : undefined,
   }
 }
 
@@ -447,6 +452,61 @@ export function summaryMarkdown(
     '',
   ].filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n')
   return { text, usd: usdTotal, prompts, activeMs }
+}
+
+/** A task in development is worth a word after an hour with no numbers for it (weekends left out). */
+export const SILENT_MS = 60 * 60_000
+
+/** Time between two moments, leaving out Saturdays and Sundays (local time). */
+export function workingMs(from: number, to: number): number {
+  let total = 0
+  let t = from
+  while (t < to) {
+    const day = new Date(t)
+    const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime()
+    const end = Math.min(next, to)
+    if (day.getDay() !== 0 && day.getDay() !== 6) total += end - t
+    t = end
+  }
+  return total
+}
+
+/**
+ * Tasks in development (Jira) with no numbers for an hour, counted from the later of
+ * their last prompt and when they entered development. Without either, I can't tell, so it isn't listed.
+ */
+export function silentTasks(tasks: TaskCost[], now: number): TaskCost[] {
+  return tasks
+    .filter(t => t.stage === 'doing' && t.ticket !== NO_TICKET)
+    .filter(t => {
+      const since = Math.max(t.lastAt || 0, t.doingSince ?? 0)
+      return since > 0 && workingMs(since, now) >= SILENT_MS
+    })
+    .sort((a, b) => (a.lastAt || 0) - (b.lastAt || 0))
+}
+
+/** "KAN-345 is in development with Ana, and I haven't heard from it in 3h." */
+export function silentText(t: TaskCost, now: number): string {
+  const who = t.assignee ? ` with ${t.assignee}` : ''
+  const heard = t.lastAt > 0 ? `I haven't heard from it in ${duration(now - t.lastAt)}` : "I haven't heard from it yet"
+  return `${t.ticket} is in development${who}, and ${heard}.`
+}
+
+/**
+ * What the team section says about silent tasks. Some heard from and some not: how many, then
+ * which. None heard from (night, a meeting, a day off): one line, not a row per task.
+ */
+export function silentNote(tasks: TaskCost[], now: number): { lead: string | null; rows: string[]; caption: string } | null {
+  const silent = silentTasks(tasks, now)
+  if (silent.length === 0) return null
+  const heard = tasks.filter(t => t.stage === 'doing' && t.ticket !== NO_TICKET && t.lastAt > 0 && workingMs(t.lastAt, now) < SILENT_MS).length
+  if (heard === 0 && silent.length > 1) {
+    return { lead: `None of the ${silent.length} tasks in development has sent me anything for over an hour.`, rows: [], caption: 'Everyone may be in a meeting, or done for the day.' }
+  }
+  const caption = 'Pigment may not be running there, or the work is on hold.'
+  if (heard === 0) return { lead: null, rows: [silentText(silent[0]!, now)], caption }
+  const total = heard + silent.length
+  return { lead: `I'm hearing from ${heard} of the ${total} tasks in development. ${silent.length === 1 ? 'One has' : `${silent.length} have`} gone quiet:`, rows: silent.map(t => silentText(t, now)), caption }
 }
 
 /** One entry per person working now (their most recent session), leaving out this session itself. */

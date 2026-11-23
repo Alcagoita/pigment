@@ -66,6 +66,10 @@ export type TaskCost = {
   estimateMs?: number
   /** Jira's status category: to do, in development, done. */
   stage?: 'todo' | 'doing' | 'done'
+  /** Who it's assigned to in Jira. */
+  assignee?: string
+  /** When it last entered development (Jira). */
+  doingSince?: number
 }
 
 /** One session that has been active recently. */
