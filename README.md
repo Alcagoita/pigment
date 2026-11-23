@@ -44,7 +44,7 @@ Pick one in `/config`, under Pigment (**View**).
 
 **The sprint** (manager)
 - **The team now** — under the manager's figure, a small developer figure for each person working right now, with their name and task. Someone who stops for ten minutes or closes the session leaves the row.
-  Under the figures, with Jira, each task in development that I haven't heard from in a working day (weekends don't count): *"KAN-345 is in development with Ana, and I haven't heard from it in 2d."* Assigned work with no numbers usually means Pigment isn't running there, or the work is on hold.
+  Under the figures, with Jira, each task in development that I haven't heard from in an hour (weekends don't count): *"KAN-345 is in development with Ana, and I haven't heard from it in 3h."* Assigned work with no numbers usually means Pigment isn't running there, or the work is on hold.
 - **Sprint 22 so far** — the total, from Jira's open sprint
 - **Worth a look** — a task close to its estimate or past it (*"KAN-045 has used 5h of its 6h."*), and sessions that have gone quiet (*"Ana's session on KAN-045 has been quiet for 1h 20m."*). A quiet session can mean someone is stuck, waiting on an answer, or simply away; it's a reason to ask, not to judge.
 - **In development** — every task in an in-progress status, with its time so far (`KAN-045 · 5h of 6h`, `KAN-96 · 2h`); the ones worth a look come first

@@ -292,22 +292,25 @@ test('The sprint with Jira: In development with time, and Worth a look', {
 })
 
 
-test('a task in development with no numbers for a working day is listed; weekends don\'t count', () => {
+test('a task in development with no numbers for an hour is listed; weekends don\'t count', () => {
   const H = 3_600_000
   const fri = new Date(2026, 10, 20, 12).getTime()
   const mon = (h: number) => new Date(2026, 10, 23, h).getTime()
   expect(workingMs(fri, mon(12))).toBe(24 * H)              // Friday afternoon + Monday morning
   expect(workingMs(new Date(2026, 10, 21, 9).getTime(), new Date(2026, 10, 22, 18).getTime())).toBe(0)
   const doing = (o: object) => ({ ticket: 'KAN-345', usd: 1, prompts: 1, lastAt: fri, stage: 'doing' as const, assignee: 'Ana', ...o })
-  expect(silentTasks([doing({})], mon(11))).toEqual([])          // 23 working hours
+  const at = (o: object, now: number) => silentTasks([doing(o)], now).map(t => t.ticket)
+  expect(at({ lastAt: mon(9) }, mon(9) + 59 * 60_000)).toEqual([])
+  expect(at({ lastAt: mon(9) }, mon(10))).toEqual(['KAN-345'])
+  expect(at({ lastAt: new Date(2026, 10, 21, 10).getTime() }, new Date(2026, 10, 22, 20).getTime())).toEqual([])  // all weekend
   expect(silentTasks([doing({})], mon(13)).map(t => t.ticket)).toEqual(['KAN-345'])
   expect(silentTasks([doing({ stage: 'todo' })], mon(13))).toEqual([])
   // Just moved into development: counted from the move, not from older numbers.
-  expect(silentTasks([doing({ doingSince: mon(9) })], mon(13))).toEqual([])
+  expect(silentTasks([doing({ doingSince: mon(12) + 30 * 60_000 })], mon(13))).toEqual([])
   // Never heard from: counted from the move; with neither, I can't tell, so it isn't listed.
   expect(silentTasks([doing({ lastAt: 0, doingSince: fri })], mon(13)).length).toBe(1)
   expect(silentTasks([doing({ lastAt: 0 })], mon(13))).toEqual([])
-  expect(SILENT_MS).toBe(24 * H)
+  expect(SILENT_MS).toBe(H)
   expect(silentText(doing({}), fri + 3 * 24 * H)).toBe("KAN-345 is in development with Ana, and I haven't heard from it in 3d.")
   expect(silentText(doing({ lastAt: 0, assignee: undefined }), mon(13))).toBe("KAN-345 is in development, and I haven't heard from it yet.")
   const i = sprintIssue({ key: 'KAN-345', fields: { status: { statusCategory: { key: 'indeterminate' } }, statuscategorychangedate: '2026-11-20T10:00:00.000Z', assignee: { displayName: 'Ana' } } })
@@ -335,7 +338,7 @@ test('under the team, tasks in development I haven\'t heard from', {
         ] } })
   store.set('migrated:/work/app', true)
   store.set('ledger:/work/app', {
-    tasks: { 'KAN-96': { ticket: 'KAN-96', usd: 3, prompts: 4, lastAt: NOW - 2 * H, activeMs: 2 * H } },
+    tasks: { 'KAN-96': { ticket: 'KAN-96', usd: 3, prompts: 4, lastAt: NOW - 30 * 60_000, activeMs: 2 * H } },
     sessions: {},
   })
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })

@@ -454,8 +454,8 @@ export function summaryMarkdown(
   return { text, usd: usdTotal, prompts, activeMs }
 }
 
-/** A task in development goes quiet after a working day with no numbers for it. */
-export const SILENT_MS = 24 * 3_600_000
+/** A task in development is worth a word after an hour with no numbers for it (weekends left out). */
+export const SILENT_MS = 60 * 60_000
 
 /** Time between two moments, leaving out Saturdays and Sundays (local time). */
 export function workingMs(from: number, to: number): number {
@@ -472,7 +472,7 @@ export function workingMs(from: number, to: number): number {
 }
 
 /**
- * Tasks in development (Jira) with no numbers for a working day, counted from the later of
+ * Tasks in development (Jira) with no numbers for an hour, counted from the later of
  * their last prompt and when they entered development. Without either, I can't tell, so it isn't listed.
  */
 export function silentTasks(tasks: TaskCost[], now: number): TaskCost[] {
@@ -485,7 +485,7 @@ export function silentTasks(tasks: TaskCost[], now: number): TaskCost[] {
     .sort((a, b) => (a.lastAt || 0) - (b.lastAt || 0))
 }
 
-/** "KAN-345 is in development with Ana, and I haven't heard from it in 2d." */
+/** "KAN-345 is in development with Ana, and I haven't heard from it in 3h." */
 export function silentText(t: TaskCost, now: number): string {
   const who = t.assignee ? ` with ${t.assignee}` : ''
   const heard = t.lastAt > 0 ? `I haven't heard from it in ${duration(now - t.lastAt)}` : "I haven't heard from it yet"
