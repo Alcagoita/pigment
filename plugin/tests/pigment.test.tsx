@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { activeFor, addPrompt, climbRatio, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow, silentTasks, silentText, workingMs, SILENT_MS } from '../hooks/lib'
+import { activeFor, addPrompt, climbRatio, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, duration, isLogStatus, jiraStarted, summaryMarkdown, worklogSeconds, emptyLedger, inDevelopment, isInside, liveFrom, lookText, NO_TICKET, signalsFor, sprintIssue, sprintRows, ticketFrom, timeFor, timeText, quietFrom, teamNow, silentTasks, silentText, silentNote, workingMs, SILENT_MS } from '../hooks/lib'
 import { figureCells, figureSvg } from '../hooks/figures'
 import { resumePrompt } from '../hooks/register'
 import type { PromptCost } from '../types'
@@ -313,6 +313,21 @@ test('a task in development with no numbers for an hour is listed; weekends don\
   expect(SILENT_MS).toBe(H)
   expect(silentText(doing({}), fri + 3 * 24 * H)).toBe("KAN-345 is in development with Ana, and I haven't heard from it in 3d.")
   expect(silentText(doing({ lastAt: 0, assignee: undefined }), mon(13))).toBe("KAN-345 is in development, and I haven't heard from it yet.")
+  // Some heard from, some not: how many, then which. None heard from: one line for the lot.
+  const now = mon(13)
+  const heard = doing({ ticket: 'KAN-96', lastAt: now - 10 * 60_000 })
+  const quiet = (ticket: string) => doing({ ticket, lastAt: mon(9) })
+  expect(silentNote([heard], now)).toBe(null)
+  expect(silentNote([heard, quiet('KAN-345'), quiet('KAN-346')], now)).toEqual({
+    lead: "I'm hearing from 1 of the 3 tasks in development. 2 have gone quiet:",
+    rows: ["KAN-345 is in development with Ana, and I haven't heard from it in 4h.", "KAN-346 is in development with Ana, and I haven't heard from it in 4h."],
+    caption: 'Pigment may not be running there, or the work is on hold.',
+  })
+  expect(silentNote([heard, quiet('KAN-345')], now)?.lead).toBe("I'm hearing from 1 of the 2 tasks in development. One has gone quiet:")
+  expect(silentNote([quiet('KAN-345'), quiet('KAN-346'), quiet('KAN-347')], now)).toEqual({
+    lead: 'None of the 3 tasks in development has sent me anything for over an hour.', rows: [], caption: 'Everyone may be in a meeting, or done for the day.',
+  })
+  expect(silentNote([quiet('KAN-345')], now)?.rows).toEqual(["KAN-345 is in development with Ana, and I haven't heard from it in 4h."])
   const i = sprintIssue({ key: 'KAN-345', fields: { status: { statusCategory: { key: 'indeterminate' } }, statuscategorychangedate: '2026-11-20T10:00:00.000Z', assignee: { displayName: 'Ana' } } })
   expect(i.assignee).toBe('Ana')
   expect(i.doingSince).toBe(Date.parse('2026-11-20T10:00:00.000Z'))
@@ -345,6 +360,7 @@ test('under the team, tasks in development I haven\'t heard from', {
   await $.command.run({ command: 'pigment', args: '' } as never)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...pane('Pigment · The sprint'), surface })
+    expect(await ui.find({ type: 'Text', text: /^I'm hearing from 1 of the 2 tasks in development\. One has gone quiet:$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^KAN-345 is in development with Ana, and I haven't heard from it yet\.$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /^KAN-96 is in development/ })).toBeFalsy()
     expect(await ui.find({ type: 'Text', text: /^KAN-10 is in development/ })).toBeFalsy()

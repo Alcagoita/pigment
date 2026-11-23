@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type { Ledger, LiveSession, PromptCost, Role, Sprint, TaskCost, Work } from '../types'
 import {
-  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, cleanKey, keyNameFrom, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, silentTasks, silentText, parseConfig, parseLines,
+  activeFor, addPrompt, ago, duration, emptyLedger, fileFor, fromLines, inDevelopment, isInside, cleanKey, keyNameFrom, liveFrom, lookText, NO_TICKET, quietFrom, teamNow, silentNote, parseConfig, parseLines,
   isLogStatus, jiraStarted, MIN_LOG_MS, prune, climbRatio, signalsFor, jiraServerFrom, mcpJson, issuesFrom, openSprintFrom, projectFrom, timeSpentText, sprintIssue, sprintRows, sprintSlug, statusFor, summaryMarkdown, worklogSeconds, ticketFrom, timeFor, timeText, toLine, tokens, usd,
 } from './lib'
 import { figureCells, figureSvg } from './figures'
@@ -877,7 +877,7 @@ export const register: Register = (on, options) => {
       // A small developer figure for each person working right now; they leave when they stop.
       const team = teamNow(s.live, c.sessionId)
       // Tasks in development I've heard nothing about: assigned work with no numbers.
-      const silent = s.source === 'jira' ? silentTasks(s.tasks, now) : []
+      const silent = s.source === 'jira' ? silentNote(s.tasks, now) : null
       const teamCard = section([
         heading('The team now'),
         team.length === 0
@@ -897,10 +897,11 @@ export const register: Register = (on, options) => {
               ))}
             </Box>
           ),
-        silent.length > 0 ? (
+        silent ? (
           <Box flexDirection="column" gap={1}>
-            {fold('silent', silent.map(t => <Text>{silentText(t, now)}</Text>))}
-            <Text dimColor size="caption">Pigment may not be running there, or the work is on hold.</Text>
+            {silent.lead ? <Text>{silent.lead}</Text> : null}
+            {silent.rows.length > 0 ? fold('silent', silent.rows.map(r => <Text>{r}</Text>)) : null}
+            <Text dimColor size="caption">{silent.caption}</Text>
           </Box>
         ) : null,
       ])

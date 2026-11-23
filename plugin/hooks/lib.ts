@@ -492,6 +492,23 @@ export function silentText(t: TaskCost, now: number): string {
   return `${t.ticket} is in development${who}, and ${heard}.`
 }
 
+/**
+ * What the team section says about silent tasks. Some heard from and some not: how many, then
+ * which. None heard from (night, a meeting, a day off): one line, not a row per task.
+ */
+export function silentNote(tasks: TaskCost[], now: number): { lead: string | null; rows: string[]; caption: string } | null {
+  const silent = silentTasks(tasks, now)
+  if (silent.length === 0) return null
+  const heard = tasks.filter(t => t.stage === 'doing' && t.ticket !== NO_TICKET && t.lastAt > 0 && workingMs(t.lastAt, now) < SILENT_MS).length
+  if (heard === 0 && silent.length > 1) {
+    return { lead: `None of the ${silent.length} tasks in development has sent me anything for over an hour.`, rows: [], caption: 'Everyone may be in a meeting, or done for the day.' }
+  }
+  const caption = 'Pigment may not be running there, or the work is on hold.'
+  if (heard === 0) return { lead: null, rows: [silentText(silent[0]!, now)], caption }
+  const total = heard + silent.length
+  return { lead: `I'm hearing from ${heard} of the ${total} tasks in development. ${silent.length === 1 ? 'One has' : `${silent.length} have`} gone quiet:`, rows: silent.map(t => silentText(t, now)), caption }
+}
+
 /** One entry per person working now (their most recent session), leaving out this session itself. */
 export function teamNow(live: LiveSession[], thisSession: string): LiveSession[] {
   const byPerson = new Map<string, LiveSession>()
