@@ -646,8 +646,10 @@ test('Start fresh: the press returns at once; a continuation is copied to paste,
   expect(forkPrompt).toMatch(/## Where things are — repositories, branches, pull requests, tickets/)
   expect(forkPrompt).toMatch(/any key, token or password/)
   expect(files.get('/work/app/.claude/handoffs/2026-11-20-19-28.md')).toBe('## Working on\nKAN-88')
-  expect(copied).toBe(resumePrompt('## Working on\nKAN-88'))
-  expect(copied).toMatch(/Carry on with the work in progress above\. The other open topics are there for when I bring them up\.$/)
+  // The clipboard points at the saved file by its full path; it doesn't carry the summary itself.
+  expect(copied).toBe(resumePrompt('/work/app/.claude/handoffs/2026-11-20-19-28.md'))
+  expect(copied).toBe("Let's pick up where we left off. Everything is in /work/app/.claude/handoffs/2026-11-20-19-28.md: read it and carry on with the work in progress. The other open topics can wait until I bring them up.")
+  expect(copied).not.toMatch(/KAN-88/)
   expect(filled).toBe('')            // never sent into this session
   // Still there for the next time, with the last one named.
   expect(await ui.find({ type: 'Button', key: 'optimize-anyway' })).toBeTruthy()

@@ -42,9 +42,9 @@ Markdown, up to 700 words, only facts from this conversation, no tools:
 Leave out: finished topics with nothing left to do, and any key, token or password.
 Answer with the note alone.`
 
-/** What the person pastes as the first message of a new session: the summary, then one line to carry on. */
-export function resumePrompt(summary: string): string {
-  return `${summary.trim()}\n\nCarry on with the work in progress above. The other open topics are there for when I bring them up.`
+/** What the person pastes as the first message of a new session: a pointer to the saved summary, not the summary itself. */
+export function resumePrompt(path: string): string {
+  return `Let's pick up where we left off. Everything is in ${path}: read it and carry on with the work in progress. The other open topics can wait until I bring them up.`
 }
 
 type Ctx = {
@@ -214,11 +214,11 @@ async function startFresh($: EngineInterface, c: Ctx, surface: RenderSurface) {
     const rel = `.claude/handoffs/${stamp}.md`
     await $.fs.write(`${c.root}/${rel}`, r.text)
     // Nothing goes into this session's box: sending it here would make this session start the new one.
-    const copied = await $.ui.copy({ text: resumePrompt(r.text), surface })
+    const copied = await $.ui.copy({ text: resumePrompt(`${c.root}/${rel}`), surface })
     await update($, work, x => ({ ...x, isBusy: false, handoffPath: rel }))
     $.ui.toast(copied.isCopied
       ? 'Ready. Open a new session and paste: it carries on from here.'
-      : `Ready. Open a new session and paste what's in ${rel}.`)
+      : `Ready. I couldn't copy, so in a new session ask Claude to read ${rel}.`)
   } catch {
     await update($, work, x => ({ ...x, isBusy: false }))
     $.ui.toast("I couldn't write the summary this time. Nothing changed; try again in a moment.")
